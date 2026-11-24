@@ -36,6 +36,7 @@ const float kTabMinW = 96.f;
 const float kBtn = 30.f;
 const float kBtnGap = 2.f;
 const float kGroupGap = 12.f;
+const float kCapBtnW = 46.f;
 
 float tabWidth(App& app, int i) {
     const Tab& t = app.tabs[(size_t)i];
@@ -257,7 +258,6 @@ D2D1_RECT_F captionIconRect(const App& app) {
 }
 
 namespace {
-const float kCapBtnW = 46.f;
 D2D1_RECT_F capButton(const App& app, int index) {
     float right = app.vw - (float)(2 - index) * kCapBtnW;
     return rect(right - kCapBtnW, 0.f, right, app.tabStripH);
@@ -308,8 +308,11 @@ void drawTabStrip(App& app) {
         app.rt->DrawLine(D2D1_POINT_2F{L, B}, D2D1_POINT_2F{L, T}, fg, lw);
     }
 
+    float tabsLimit = app.vw - kCapBtnW * 3.f - 6.f;
     for (int i = 0; i < (int)app.tabs.size(); ++i) {
         D2D1_RECT_F r = tabRect(app, i);
+        if (r.left >= tabsLimit) break;
+        r.right = std::min(r.right, tabsLimit);
         bool sel = i == app.active;
         D2D1_COLOR_F bg = sel ? app.th.bg : app.th.panel;
         ComPtr<ID2D1SolidColorBrush> b;
@@ -341,8 +344,10 @@ void drawTabStrip(App& app) {
     }
 
     D2D1_RECT_F plus = newTabRect(app);
-    app.rt->DrawText(L"+", 1, app.fmtIcon.get(), plus, app.brMuted.get(),
-                     D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    if (plus.left < tabsLimit)
+        app.rt->DrawText(L"+", 1, app.fmtIcon.get(),
+                         rect(plus.left, plus.top, std::min(plus.right, tabsLimit), plus.bottom),
+                         app.brMuted.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 
     // ---- window buttons ----
     D2D1_RECT_F btn[3] = {captionMinRect(app), captionMaxRect(app), captionCloseRect(app)};
@@ -528,12 +533,14 @@ void drawChrome(App& app) {
 ChromeHit chromeHitTest(App& app, float x, float y) {
     ChromeHit h;
     if (y < app.tabStripH) {
+        float tabsLimit = app.vw - kCapBtnW * 3.f - 6.f;
         D2D1_RECT_F plus = newTabRect(app);
-        if (x >= plus.left && x <= plus.right) {
+        if (plus.left < tabsLimit && x >= plus.left && x <= plus.right) {
             h.action = ChromeAction::NewTab;
             return h;
         }
         for (int i = 0; i < (int)app.tabs.size(); ++i) {
+            if (tabRect(app, i).left >= tabsLimit) break;
             D2D1_RECT_F c = closeTabRect(app, i);
             if (x >= c.left && x <= c.right) {
                 h.action = ChromeAction::CloseTab;
