@@ -195,3 +195,80 @@ void drawImageBlock(App& app, const Item& it, const std::wstring& path) {
                           (r.top + r.bottom) * 0.5f + 14.f),
                      app.brMuted.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
+
+// Pulls a CF_DIB off the clipboard and writes it as a PNG next to the
+// document, so pasted screenshots become ordinary relative links.
+bool saveClipboardImage(HWND owner, const std::wstring& file) {
+    if (!OpenClipboard(owner)) return false;
+    HANDLE h = GetClipboardData(CF_DIB);
+    if (!h) {
+        CloseClipboard();
+        return false;
+    }
+    const BITMAPINFOHEADER* bi = (const BITMAPINFOHEADER*)GlobalLock(h);
+    bool ok = false;
+    if (bi && bi->biBitCount >= 24 && bi->biCompression == BI_RGB) {
+        int w = (int)bi->biWidth;
+        int hgt = (int)bi->biHeight;
+        bool topDown = hgt < 0;
+        if (topDown) hgt = -hgt;
+        const BYTE* bits = (const BYTE*)bi + bi->biSize;
+        const int srcBpp = bi->biBitCount / 8;
+        const int srcStride = ((w * bi->biBitCount + 31) / 32) * 4;
+
+        std::vector<BYTE> px((size_t)w * (size_t)hgt * 4, 0);
+        bool anyAlpha = false;
+        for (int y = 0; y < hgt; ++y) {
+            const BYTE* row = bits + (size_t)(topDown ? y : hgt - 1 - y) * srcStride;
+            BYTE* dst = px.data() + (size_t)y * w * 4;
+            for (int x = 0; x < w; ++x) {
+                dst[x * 4 + 0] = row[x * srcBpp + 0];
+                dst[x * 4 + 1] = row[x * srcBpp + 1];
+                dst[x * 4 + 2] = row[x * srcBpp + 2];
+                BYTE a = srcBpp == 4 ? row[x * 4 + 3] : 255;
+                dst[x * 4 + 3] = a;
+                if (a) anyAlpha = true;
+            }
+        }
+        if (!anyAlpha)
+            for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+
+        IWICImagingFactory* f = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(&f)))) {
+            IWICBitmap* bmp = nullptr;
+            if (SUCCEEDED(f->CreateBitmapFromMemory((UINT)w, (UINT)hgt,
+                                                    GUID_WICPixelFormat32bppBGRA, (UINT)w * 4,
+                                                    (UINT)px.size(), px.data(), &bmp))) {
+                IWICStream* stream = nullptr;
+                if (SUCCEEDED(f->CreateStream(&stream)) &&
+                    SUCCEEDED(stream->InitializeFromFilename(file.c_str(), GENERIC_WRITE))) {
+                    IWICBitmapEncoder* enc = nullptr;
+                    if (SUCCEEDED(f->CreateEncoder(GUID_ContainerFormatPng, nullptr, &enc)) &&
+                        SUCCEEDED(enc->Initialize(stream, WICBitmapEncoderNoCache))) {
+                        IWICBitmapFrameEncode* frame = nullptr;
+                        IPropertyBag2* props = nullptr;
+                        if (SUCCEEDED(enc->CreateNewFrame(&frame, &props))) {
+                            frame->Initialize(props);
+                            frame->SetSize((UINT)w, (UINT)hgt);
+                            WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
+                            frame->SetPixelFormat(&fmt);
+                            if (SUCCEEDED(frame->WriteSource(bmp, nullptr)) &&
+                                SUCCEEDED(frame->Commit()))
+                                ok = SUCCEEDED(enc->Commit());
+                            frame->Release();
+                            if (props) props->Release();
+                        }
+                        enc->Release();
+                    }
+                    stream->Release();
+                }
+                bmp->Release();
+            }
+            f->Release();
+        }
+    }
+    GlobalUnlock(h);
+    CloseClipboard();
+    return ok;
+}

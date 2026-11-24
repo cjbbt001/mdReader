@@ -84,9 +84,6 @@ void toggleMode(App& app);
 bool saveTab(App& app);           // false when cancelled/failed
 void saveTabAs(App& app);
 void syncEditorToPreview(App& app);  // re-parse the buffer, re-anchor the view
-void previewEditAt(App& app, int blockIndex);
-int blockAtViewPoint(App& app, float x, float y);
-int sourceLineForBlock(Tab& t, int blockIndex);
 
 // ---- layout / scrolling ----
 void scrollTo(App& app, float y);
@@ -135,6 +132,7 @@ bool imageInfo(const std::wstring& path, UINT* w, UINT* h, int* state);
 void requestImage(App& app, const std::wstring& path);
 ID2D1Bitmap* imageBitmap(const std::wstring& path);
 void drawImageBlock(App& app, const Item& it, const std::wstring& path);
+bool saveClipboardImage(HWND owner, const std::wstring& path);
 
 // ---- syntax highlighting ----
 void highlightCode(const std::wstring& code, const std::wstring& lang, std::vector<Run>& out);

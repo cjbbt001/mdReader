@@ -298,9 +298,59 @@ void edCopy(App& app, bool cut) {
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
+namespace {
+
+// Pastes a clipboard bitmap as attachment/<name>.png next to the document and
+// inserts the markdown link at the caret.
+void pasteClipboardImage(App& app) {
+    if (!app.hasTab() || app.tab().path.empty()) {
+        MessageBoxW(app.hwnd, L"先把文档保存到磁盘，图片会放到同级目录的 attachment 文件夹",
+                    L"MD Reader", MB_ICONINFORMATION);
+        return;
+    }
+    std::wstring path = app.tab().path;
+    size_t slash = path.find_last_of(L"\/");
+    std::wstring dir = (slash == std::wstring::npos) ? std::wstring() : path.substr(0, slash + 1);
+    std::wstring attach = dir + L"attachment";
+    CreateDirectoryW(attach.c_str(), nullptr);
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t name[128];
+    for (int n = 0; n < 100; ++n) {
+        if (n == 0)
+            swprintf(name, 128, L"attachment/image-%02d%02d%02d-%02d%02d%02d.png", st.wYear % 100,
+                     st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        else
+            swprintf(name, 128, L"attachment/image-%02d%02d%02d-%02d%02d%02d-%d.png",
+                     st.wYear % 100, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, n);
+        std::wstring full = dir + name;
+        if (GetFileAttributesW(full.c_str()) != INVALID_FILE_ATTRIBUTES) continue;
+        if (!saveClipboardImage(app.hwnd, full)) return;
+        std::wstring insert = std::wstring(L"![](") + name + L")";
+        Editor& ed = app.tab().ed;
+        // On its own line the image becomes a block-level element.
+        if (ed.caret.col > 0) insert = std::wstring(L"\n") + insert;
+        ed.snapshot(GetTickCount64());
+        ed.insert(insert + std::wstring(L"\n"));
+        app.tab().dirty = true;
+        edEnsureCaretVisible(app);
+        InvalidateRect(app.hwnd, nullptr, FALSE);
+        return;
+    }
+}
+
+}  // namespace
+
 void edPaste(App& app) {
     if (!app.hasTab() || app.tab().mode != Mode::Source) return;
     if (!OpenClipboard(app.hwnd)) return;
+
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) && IsClipboardFormatAvailable(CF_DIB)) {
+        CloseClipboard();
+        pasteClipboardImage(app);
+        return;
+    }
     HANDLE h = GetClipboardData(CF_UNICODETEXT);
     if (h) {
         const wchar_t* p = (const wchar_t*)GlobalLock(h);
@@ -658,77 +708,6 @@ void openHelp(App& app) {
 }
 
 
-// ------------------------------------------------------------------ preview editing
-
-int blockAtViewPoint(App& app, float x, float y) {
-    if (!app.hasTab()) return -1;
-    Tab& t = app.tab();
-    if (x < 0.f || x > app.contentRight()) return -1;
-    float docY = y - app.contentTop() + t.scrollY;
-    for (const auto& it : t.lay.items) {
-        if (docY >= it.y && docY <= it.y + it.h) return it.blockIndex;
-        if (it.y > docY) break;
-    }
-    return -1;
-}
-
-namespace {
-
-std::wstring blockNeedle(const Block& b) {
-    std::wstring s;
-    if (b.kind == BKind::Code) {
-        size_t i = 0;
-        while (i < b.code.size() && (b.code[i] == L'\n' || b.code[i] == L'\r')) ++i;
-        size_t j = b.code.find_first_of(L"\r\n", i);
-        s = b.code.substr(i, j == std::wstring::npos ? std::wstring::npos : j - i);
-    } else if (b.kind == BKind::Table) {
-        return std::wstring();
-    } else {
-        for (const auto& r : b.runs) s += r.text;
-    }
-    size_t a = s.find_first_not_of(L" \t\r\n");
-    if (a == std::wstring::npos) return std::wstring();
-    s = s.substr(a);
-    if (s.size() > 24) s = s.substr(0, 24);
-    return s;
-}
-
-}  // namespace
-
-// Blocks appear in document order, so a forward search over the buffer finds
-// each one: short needles keep it working when markdown markers sit between.
-int sourceLineForBlock(Tab& t, int blockIndex) {
-    std::wstring src = t.ed.text();
-    size_t pos = 0;
-    for (int i = 0; i <= blockIndex && i < (int)t.doc.blocks.size(); ++i) {
-        std::wstring needle = blockNeedle(t.doc.blocks[(size_t)i]);
-        if (needle.empty()) continue;
-        for (size_t cut : {needle.size(), (size_t)16, (size_t)10, (size_t)6, (size_t)4}) {
-            if (cut > needle.size()) continue;
-            size_t found = src.find(needle.substr(0, cut), pos);
-            if (found != std::wstring::npos) {
-                pos = found;
-                break;
-            }
-        }
-    }
-    int line = 0;
-    for (size_t i = 0; i < pos && i < src.size(); ++i)
-        if (src[i] == L'\n') ++line;
-    return line;
-}
-
-void previewEditAt(App& app, int blockIndex) {
-    if (!app.hasTab() || blockIndex < 0) return;
-    int line = sourceLineForBlock(app.tab(), blockIndex);
-    switchMode(app, Mode::Source);
-    Editor& ed = app.tab().ed;
-    ed.moveTo(Pos{line, 0}, false);
-    ed.firstLine = std::max(0, line - 4);
-    edEnsureCaretVisible(app);
-    InvalidateRect(app.hwnd, nullptr, FALSE);
-}
-
 void toggleTheme(App& app) {
     app.themeDark = !app.themeDark;
     app.forceTheme = app.themeDark ? 1 : 2;
@@ -954,11 +933,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                         scrollToBlock(*app, app->tab().toc[(size_t)oi].blockIndex);
                         return 0;
                     }
-                    int bi = blockAtViewPoint(*app, x, y);
-                    if (bi >= 0) {
-                        previewEditAt(*app, bi);
-                        return 0;
-                    }
                     ScrollGeom g = scrollGeom(*app);
                     if (g.visible && x >= g.trackX - 6.f && x <= g.trackX + g.trackW + 6.f) {
                         if (y >= g.thumbY && y <= g.thumbY + g.thumbH) {
@@ -1041,8 +1015,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (app->hasTab() && app->tab().mode == Mode::Source) {
-                if (c == L'\r') { edKey(*app, VK_RETURN, false, false); return 0; }
-                if (c == L'\t') { edInsertText(*app, L"    "); return 0; }
+                // Enter and Tab arrive through WM_KEYDOWN; ignore the WM_CHAR copies.
+                if (c == L'\r' || c == L'\t') return 0;
                 if (c >= 32 && c != 127) {
                     wchar_t buf[2] = {c, 0};
                     edInsertText(*app, buf);
