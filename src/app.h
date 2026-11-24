@@ -14,10 +14,10 @@ struct App {
     ComPtr<ID2D1HwndRenderTarget> rt;
 
     ComPtr<ID2D1SolidColorBrush> brText, brMuted, brLink, brCodeBg, brCodeText, brRule,
-        brQuote, brTableHead, brTableLine, brThumb;
+        brQuote, brTableHead, brTableLine, brThumb, brPanel;
 
     ComPtr<IDWriteTextFormat> fmtBody, fmtQuote, fmtCode, fmtTable, fmtTableHead,
-        fmtMarker, fmtMarkerRight;
+        fmtMarker, fmtMarkerRight, fmtToc, fmtBtn;
     ComPtr<IDWriteTextFormat> fmtH[6];
 
     float codeSpanSize = 14.f;
@@ -25,6 +25,17 @@ struct App {
     Theme th;
     Doc doc;
     Layout lay;
+    std::vector<TocEntry> toc;
+
+    // Chrome
+    float toolbarH = 30.f;
+    bool showOutline = false;
+    float outlineW = 236.f;
+    float outlineScroll = 0.f;
+    int hoverBtn = -1;
+
+    float viewH() const { return vh - toolbarH; }
+    float contentRight() const { return showOutline ? vw - outlineW : vw; }
 
     float scrollY = 0.f;
     float vw = 0.f, vh = 0.f;   // viewport in DIPs
@@ -46,3 +57,10 @@ void ensureLayoutForView(App& app);
 struct ScrollGeom { float trackX, trackW, thumbY, thumbH, trackY, trackH; bool visible; };
 ScrollGeom scrollGeom(const App& app);
 void scrollToThumb(App& app, float thumbY);
+void toggleOutline(App& app);
+void scrollToBlock(App& app, int blockIndex);
+void scrollOutline(App& app, float dy);
+D2D1_RECT_F outlineButtonRect(const App& app);
+// Outline panel hit testing: index of the entry under (x, y) in DIPs, or -1.
+int outlineHit(const App& app, float x, float y);
+void outlineEntryRect(const App& app, int index, float* top, float* bottom);

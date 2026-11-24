@@ -300,3 +300,21 @@ bool loadDoc(const std::wstring& path, Doc& doc, std::wstring& err) {
     }
     return true;
 }
+
+void buildToc(const Doc& doc, std::vector<TocEntry>& out) {
+    out.clear();
+    for (size_t i = 0; i < doc.blocks.size(); ++i) {
+        const Block& b = doc.blocks[i];
+        if (b.kind != BKind::Heading) continue;
+        std::wstring text;
+        for (const auto& r : b.runs) text += r.text;
+        size_t a = text.find_first_not_of(L" \t\r\n");
+        size_t z = text.find_last_not_of(L" \t\r\n");
+        if (a == std::wstring::npos) continue;
+        TocEntry e;
+        e.level = b.level < 1 ? 1 : (b.level > 6 ? 6 : b.level);
+        e.text = text.substr(a, z - a + 1);
+        e.blockIndex = (int)i;
+        out.push_back(std::move(e));
+    }
+}

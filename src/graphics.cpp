@@ -118,6 +118,19 @@ bool initGraphics(App& app) {
     app.fmtCode = makeFormat(app, L"Consolas", 13.5f, DWRITE_FONT_WEIGHT_NORMAL, 1.55f);
     app.fmtTable = makeFormat(app, L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_NORMAL, 1.45f);
     app.fmtTableHead = makeFormat(app, L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_BOLD, 1.45f);
+    app.fmtToc = makeFormat(app, L"Segoe UI", 14.f, DWRITE_FONT_WEIGHT_NORMAL, 1.5f);
+    if (app.fmtToc) {
+        app.fmtToc->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        ComPtr<IDWriteInlineObject> ellipsis;
+        DWRITE_TRIMMING tr = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        if (SUCCEEDED(app.dwrite->CreateEllipsisTrimmingSign(app.fmtToc.get(), ellipsis.put())))
+            app.fmtToc->SetTrimming(&tr, ellipsis.get());
+    }
+    app.fmtBtn = makeFormat(app, L"Segoe UI", 13.5f, DWRITE_FONT_WEIGHT_NORMAL, 1.4f);
+    if (app.fmtBtn) {
+        app.fmtBtn->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        app.fmtBtn->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
     app.fmtMarker = makeFormat(app, L"Segoe UI", 16.f, DWRITE_FONT_WEIGHT_NORMAL, 1.6f);
     app.fmtMarkerRight = makeFormat(app, L"Segoe UI", 16.f, DWRITE_FONT_WEIGHT_NORMAL, 1.6f);
     if (app.fmtMarkerRight) app.fmtMarkerRight->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
@@ -138,6 +151,7 @@ void releaseTarget(App& app) {
     app.brTableHead.reset();
     app.brTableLine.reset();
     app.brThumb.reset();
+    app.brPanel.reset();
 }
 
 void createTarget(App& app) {
@@ -180,6 +194,7 @@ void createTarget(App& app) {
     mk(app.brTableHead);
     mk(app.brTableLine);
     mk(app.brThumb);
+    mk(app.brPanel);
 
     applyTheme(app);
 }
@@ -196,20 +211,21 @@ void applyTheme(App& app) {
     if (app.brTableHead) app.brTableHead->SetColor(app.th.tableHead);
     if (app.brTableLine) app.brTableLine->SetColor(app.th.tableLine);
     if (app.brThumb) app.brThumb->SetColor(app.th.thumb);
+    if (app.brPanel) app.brPanel->SetColor(app.th.panel);
 }
 
 ScrollGeom scrollGeom(const App& app) {
     ScrollGeom g = {};
-    float trackH = app.vh - 16.f;
-    float contentH = std::max(app.lay.contentH, app.vh);
-    g.visible = app.lay.contentH > app.vh + 1.f;
+    float trackH = app.viewH() - 16.f;
+    float contentH = std::max(app.lay.contentH, app.viewH());
+    g.visible = app.lay.contentH > app.viewH() + 1.f;
     g.trackW = 8.f;
-    g.trackX = app.vw - g.trackW - 4.f;
-    g.trackY = 8.f;
+    g.trackX = app.contentRight() - g.trackW - 4.f;
+    g.trackY = app.toolbarH + 8.f;
     g.trackH = trackH;
-    float ratio = app.vh / contentH;
+    float ratio = app.viewH() / contentH;
     g.thumbH = std::max(28.f, trackH * ratio);
-    float maxScroll = std::max(1.f, contentH - app.vh);
+    float maxScroll = std::max(1.f, contentH - app.viewH());
     float t = app.scrollY / maxScroll;
     if (t < 0.f) t = 0.f;
     if (t > 1.f) t = 1.f;
@@ -224,14 +240,14 @@ void scrollToThumb(App& app, float thumbY) {
     float t = (thumbY - g.trackY) / span;
     if (t < 0.f) t = 0.f;
     if (t > 1.f) t = 1.f;
-    float contentH = std::max(app.lay.contentH, app.vh);
-    scrollTo(app, t * (contentH - app.vh));
+    float contentH = std::max(app.lay.contentH, app.viewH());
+    scrollTo(app, t * (contentH - app.viewH()));
 }
 
 void scrollTo(App& app, float y) {
     if (y < 0.f) y = 0.f;
     if (app.lay.done) {
-        float maxY = std::max(0.f, app.lay.contentH - app.vh);
+        float maxY = std::max(0.f, app.lay.contentH - app.viewH());
         if (y > maxY) y = maxY;
     }
     app.scrollY = y;
@@ -241,9 +257,161 @@ void scrollTo(App& app, float y) {
 
 void ensureLayoutForView(App& app) {
     if (app.lay.done) return;
-    layoutStep(app, app.scrollY + app.vh * 1.5f, 8);
+    layoutStep(app, app.scrollY + app.viewH() * 1.5f, 8);
     if (!app.lay.done) SetTimer(app.hwnd, 1, 1, nullptr);
 }
+
+
+namespace {
+
+const float kTocItemH = 26.f;
+const float kTocTopPad = 10.f;
+
+int currentOutlineIndex(const App& app) {
+    int cur = -1;
+    for (int i = 0; i < (int)app.toc.size(); ++i) {
+        size_t b = (size_t)app.toc[i].blockIndex;
+        if (b >= app.lay.blockY.size()) break;
+        if (app.lay.blockY[b] <= app.scrollY + 14.f) cur = i;
+        else break;
+    }
+    return cur;
+}
+
+void clampOutlineScroll(App& app) {
+    float panelH = app.viewH() - kTocTopPad * 2.f;
+    float total = (float)app.toc.size() * kTocItemH;
+    float maxS = std::max(0.f, total - panelH);
+    if (app.outlineScroll < 0.f) app.outlineScroll = 0.f;
+    if (app.outlineScroll > maxS) app.outlineScroll = maxS;
+}
+
+void followOutline(App& app) {
+    int cur = currentOutlineIndex(app);
+    if (cur < 0) return;
+    float panelH = app.viewH() - kTocTopPad * 2.f;
+    float top = (float)cur * kTocItemH - app.outlineScroll;
+    if (top < 0.f) app.outlineScroll = (float)cur * kTocItemH;
+    else if (top + kTocItemH > panelH) app.outlineScroll = (float)cur * kTocItemH + kTocItemH - panelH;
+    clampOutlineScroll(app);
+}
+
+}  // namespace
+
+D2D1_RECT_F outlineButtonRect(const App& app) {
+    float w = 54.f, h = 21.f;
+    float right = app.vw - 12.f;
+    float top = (app.toolbarH - h) * 0.5f;
+    return rect(right - w, top, right, top + h);
+}
+
+void outlineEntryRect(const App& app, int index, float* top, float* bottom) {
+    float y = app.toolbarH + kTocTopPad + (float)index * kTocItemH - app.outlineScroll;
+    *top = y;
+    *bottom = y + kTocItemH;
+}
+
+int outlineHit(const App& app, float x, float y) {
+    if (!app.showOutline) return -1;
+    if (x < app.contentRight() || y < app.toolbarH) return -1;
+    float rel = y - app.toolbarH - kTocTopPad + app.outlineScroll;
+    if (rel < 0.f) return -1;
+    int i = (int)(rel / kTocItemH);
+    if (i < 0 || i >= (int)app.toc.size()) return -1;
+    return i;
+}
+
+void scrollOutline(App& app, float dy) {
+    if (!app.showOutline) return;
+    float panelH = app.viewH() - 20.f;
+    float total = (float)app.toc.size() * 26.f;
+    float maxS = std::max(0.f, total - panelH);
+    app.outlineScroll += dy;
+    if (app.outlineScroll < 0.f) app.outlineScroll = 0.f;
+    if (app.outlineScroll > maxS) app.outlineScroll = maxS;
+    InvalidateRect(app.hwnd, nullptr, FALSE);
+}
+
+void scrollToBlock(App& app, int blockIndex) {
+    if (blockIndex < 0 || (size_t)blockIndex >= app.lay.blockY.size()) return;
+    scrollTo(app, std::max(0.f, app.lay.blockY[(size_t)blockIndex] - 6.f));
+}
+
+void toggleOutline(App& app) {
+    int anchor = blockAtScroll(app);
+    app.showOutline = !app.showOutline;
+    if (!app.showOutline) app.outlineScroll = 0.f;
+    layoutReset(app);
+    ensureLayoutForView(app);
+    if (anchor >= 0 && (size_t)anchor < app.lay.blockY.size())
+        scrollTo(app, app.lay.blockY[(size_t)anchor]);
+    else
+        scrollTo(app, 0.f);
+    InvalidateRect(app.hwnd, nullptr, FALSE);
+}
+
+namespace {
+
+void drawToolbar(App& app) {
+    app.rt->FillRectangle(rect(0.f, app.toolbarH - 1.f, app.vw, app.toolbarH), app.brRule.get());
+
+    D2D1_RECT_F b = outlineButtonRect(app);
+    bool active = app.showOutline;
+    if (active || app.hoverBtn == 0) {
+        D2D1_ROUNDED_RECT rr;
+        rr.rect = b;
+        rr.radiusX = 5.f;
+        rr.radiusY = 5.f;
+        app.rt->FillRoundedRectangle(rr, active ? app.brPanel.get() : app.brTableHead.get());
+    }
+    ID2D1Brush* fg = (active || app.hoverBtn == 0) ? app.brText.get() : app.brMuted.get();
+    const wchar_t* label = L"大纲";
+    app.rt->DrawText(label, (UINT32)wcslen(label), app.fmtBtn.get(), b, fg,
+                     D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+void drawOutline(App& app) {
+    float x0 = app.contentRight();
+    if (x0 >= app.vw - 1.f) return;
+
+    app.rt->FillRectangle(rect(x0, app.toolbarH, app.vw, app.vh), app.brPanel.get());
+    app.rt->FillRectangle(rect(x0, app.toolbarH, x0 + 1.f, app.vh), app.brRule.get());
+
+    app.rt->PushAxisAlignedClip(rect(x0 + 1.f, app.toolbarH, app.vw, app.vh),
+                                D2D1_ANTIALIAS_MODE_ALIASED);
+
+    if (app.toc.empty()) {
+        D2D1_RECT_F r = rect(x0 + 14.f, app.toolbarH + 14.f, app.vw - 14.f, app.toolbarH + 60.f);
+        const wchar_t* hint = L"没有标题";
+        app.rt->DrawText(hint, (UINT32)wcslen(hint), app.fmtToc.get(), r, app.brMuted.get(),
+                         D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
+    followOutline(app);
+    int cur = currentOutlineIndex(app);
+    for (int i = 0; i < (int)app.toc.size(); ++i) {
+        float top = 0.f, bottom = 0.f;
+        outlineEntryRect(app, i, &top, &bottom);
+        if (bottom < app.toolbarH) continue;
+        if (top > app.vh) break;
+
+        float indent = 12.f + (float)(app.toc[i].level - 1) * 12.f;
+        D2D1_RECT_F r = rect(x0 + indent, top, app.vw - 12.f, bottom);
+        if (i == cur) {
+            D2D1_ROUNDED_RECT rr;
+            rr.rect = rect(x0 + 6.f, top + 2.f, app.vw - 6.f, bottom - 2.f);
+            rr.radiusX = 4.f;
+            rr.radiusY = 4.f;
+            app.rt->FillRoundedRectangle(rr, app.brTableHead.get());
+        }
+        ID2D1Brush* fg = (i == cur) ? app.brText.get() : app.brMuted.get();
+        app.rt->DrawText(app.toc[i].text.c_str(), (UINT32)app.toc[i].text.size(),
+                         app.fmtToc.get(), r, fg, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+    app.rt->PopAxisAlignedClip();
+}
+
+}  // namespace
 
 void paint(App& app) {
     if (!app.d2d) return;
@@ -256,7 +424,12 @@ void paint(App& app) {
     app.rt->SetTransform(identity);
     app.rt->Clear(app.th.bg);
 
-    D2D1_MATRIX_3X2_F tr = {1.f, 0.f, 0.f, 1.f, 0.f, -app.scrollY};
+    float cRight = app.contentRight();
+
+    // ---- document ----
+    app.rt->PushAxisAlignedClip(rect(0.f, app.toolbarH, cRight, app.vh),
+                                D2D1_ANTIALIAS_MODE_ALIASED);
+    D2D1_MATRIX_3X2_F tr = {1.f, 0.f, 0.f, 1.f, 0.f, app.toolbarH - app.scrollY};
     app.rt->SetTransform(tr);
 
     if (app.lay.items.empty()) {
@@ -266,25 +439,26 @@ void paint(App& app) {
         ComPtr<IDWriteTextLayout> tl;
         if (app.fmtBody &&
             SUCCEEDED(app.dwrite->CreateTextLayout(hint, (UINT32)wcslen(hint), app.fmtBody.get(),
-                                                   app.vw, 100.f, tl.put()))) {
+                                                   cRight, 100.f, tl.put()))) {
             tl->GetMetrics(&m);
-            D2D1_POINT_2F pt = {std::floor((app.vw - m.width) * 0.5f),
-                                std::floor((app.vh - m.height) * 0.5f)};
+            D2D1_POINT_2F pt = {std::floor((cRight - m.width) * 0.5f),
+                                app.toolbarH + std::floor((app.viewH() - m.height) * 0.5f)};
             app.rt->DrawTextLayout(pt, tl.get(), app.brMuted.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
         }
     } else {
         for (const auto& it : app.lay.items) {
             if (it.y + it.h < app.scrollY - 200.f) continue;
-            if (it.y > app.scrollY + app.vh + 200.f) break;
+            if (it.y > app.scrollY + app.viewH() + 200.f) break;
             drawItem(app, it);
         }
         app.rt->SetTransform(identity);
     }
+    app.rt->PopAxisAlignedClip();
 
+    // ---- scrollbar ----
     if (!app.lay.items.empty()) {
         ScrollGeom g = scrollGeom(app);
         if (g.visible && app.brThumb) {
-            app.rt->SetTransform(identity);
             D2D1_ROUNDED_RECT rr;
             rr.rect = rect(g.trackX, g.thumbY, g.trackX + g.trackW, g.thumbY + g.thumbH);
             rr.radiusX = 4.f;
@@ -293,10 +467,16 @@ void paint(App& app) {
         }
     }
 
-    HRESULT hr = app.rt->EndDraw();
+    // ---- outline + toolbar ----
+    if (app.showOutline) drawOutline(app);
+    drawToolbar(app);
 
+    HRESULT hr = app.rt->EndDraw();
     static bool firstPaint = true;
-    if (firstPaint) { firstPaint = false; trace("first frame presented"); }
+    if (firstPaint) {
+        firstPaint = false;
+        trace("first frame presented");
+    }
     if (hr == D2DERR_RECREATE_TARGET) {
         releaseTarget(app);
         createTarget(app);

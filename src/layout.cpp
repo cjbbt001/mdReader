@@ -13,13 +13,13 @@ const float kQuoteIndent = 16.f;
 const float kCodePad = 12.f;
 
 float contentW(const App& a) {
-    float w = a.vw - 2 * kMarginX;
+    float w = a.contentRight() - 2 * kMarginX;
     if (w > kMaxContent) w = kMaxContent;
     if (w < 80.f) w = 80.f;
     return w;
 }
 
-float contentX(const App& a) { return std::floor((a.vw - contentW(a)) * 0.5f); }
+float contentX(const App& a) { return std::floor((a.contentRight() - contentW(a)) * 0.5f); }
 
 float gapBefore(const Block& b) {
     switch (b.kind) {
@@ -225,9 +225,41 @@ Item layoutBlock(App& app, const Block& b, float y, float cx, float cw) {
 
 void layoutReset(App& app) {
     app.lay.items.clear();
+    app.lay.blockY.assign(app.doc.blocks.size(), 0.f);
     app.lay.next = 0;
     app.lay.contentH = kMarginTop;
     app.lay.done = app.doc.blocks.empty();
+}
+
+void relayoutFrom(App& app, size_t blockIndex) {
+    Layout& L = app.lay;
+    if (blockIndex > app.doc.blocks.size()) blockIndex = app.doc.blocks.size();
+    while (!L.items.empty() && (size_t)L.items.back().blockIndex >= blockIndex) L.items.pop_back();
+    L.next = blockIndex;
+    L.done = false;
+    L.contentH = L.items.empty()
+                     ? kMarginTop
+                     : L.items.back().y + L.items.back().h +
+                           gapAfter(app.doc.blocks[(size_t)L.items.back().blockIndex]);
+}
+
+int blockAtScroll(const App& app) {
+    int best = 0;
+    for (const auto& it : app.lay.items) {
+        if (it.y <= app.scrollY + 1.f) best = it.blockIndex;
+        else break;
+    }
+    return best;
+}
+
+void reflowAnchor(App& app) {
+    int anchor = blockAtScroll(app);
+    layoutReset(app);
+    ensureLayoutForView(app);
+    if (anchor >= 0 && (size_t)anchor < app.lay.blockY.size())
+        scrollTo(app, app.lay.blockY[(size_t)anchor]);
+    else
+        scrollTo(app, 0.f);
 }
 
 void layoutStep(App& app, float untilY, int budgetMs) {
@@ -240,7 +272,9 @@ void layoutStep(App& app, float untilY, int budgetMs) {
     while (L.next < app.doc.blocks.size()) {
         const Block& b = app.doc.blocks[L.next];
         Item it = layoutBlock(app, b, L.contentH, cx, cw);
+        it.blockIndex = (int)L.next;
         L.contentH = it.y + it.h + gapAfter(b);
+        if (L.next < L.blockY.size()) L.blockY[L.next] = it.y;
         L.items.push_back(std::move(it));
         ++L.next;
         if (L.contentH >= untilY) break;

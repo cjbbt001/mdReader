@@ -4,6 +4,10 @@ Windows 上的极简 Markdown 阅读器：只读、零配置、双击即阅。Wi
 
 ![screenshot](docs/screenshot.png)
 
+大纲面板（`Ctrl+B` 或右上角按钮），点击跳转，滚动时自动跟随：
+
+![outline](docs/outline.png)
+
 ## 构建
 
 不需要 Visual Studio。装一个 MinGW-w64 并把 `g++`/`gcc`/`windres` 放进 PATH（本机用的是便携版 [w64devkit](https://github.com/skeeto/w64devkit)，解压到 `.tools/w64devkit` 即可，`build.sh` 会自动找），然后：
@@ -26,7 +30,7 @@ mdreader.exe <文件.md> --light    强制浅色
 
 不带参数时显示空白提示页。拖放文件到窗口也可以打开，Ctrl+O 打开对话框。
 
-按键：滚动滚轮 / PageUp / PageDown / Space / Home / End / 方向键。滚动条是自己画的，可以拖。
+按键：滚动滚轮 / PageUp / PageDown / Space / Home / End / 方向键。`Ctrl+B` 开关大纲，`Ctrl+O` 打开文件。滚动条是自己画的，可以拖。
 
 `MDREADER_TRACE=1` 启动时会把各阶段耗时写到 `%TEMP%/mdreader.trace`。
 
@@ -40,12 +44,14 @@ mdreader.exe <文件.md> --light    强制浅色
 - 视口优先的增量排版：先排完当前视口就出帧，剩下的在空闲时继续
 - 窗口缩放后重新排版，滚动位置按内容重新锚定
 - 跟随系统深浅色（`AppsUseLightTheme`）
+- 大纲面板：按标题层级缩进，点击跳转，滚动时跟随高亮，鼠标滚轮单独滚动面板
 
 还没做的：
 
 - 图片（现在只走 alt 文本）
 - 代码块语法高亮
 - Ctrl+F 查找、链接点击跳转
+- 源码/编辑模式（下一轮）
 - 文件关联、单实例（双击第二个文件会开新窗口）
 - 记住每个文件的滚动位置
 
@@ -55,14 +61,14 @@ mdreader.exe <文件.md> --light    强制浅色
 
 | 项目 | 数值 |
 | --- | --- |
-| 二进制体积 | 1,172,480 字节 |
+| 二进制体积 | 1,181,696 字节 |
 | 窗口可见 | 47–78 ms |
 | 首帧内容 | ~100 ms |
 | 小文档内存 | 42 MB 工作集 / 30 MB 提交 |
 | 90 KB 文档（2801 个块） | 67 MB 工作集 / 95 MB 提交 |
 | 单帧绘制（1080×900） | 2–5 ms |
 | 单帧绘制（1900×1060） | ~3 ms |
-| 源码 | 约 1400 行 |
+| 源码 | 约 1500 行 |
 
 启动拆解：`CreateWindowExW` ~35 ms（窗口类 + 主题初始化），`ShowWindow` ~50 ms（首次 DWM 合成），D2D 渲染目标 ~8 ms，解析 + 首次排版 < 5 ms。
 

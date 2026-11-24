@@ -62,7 +62,9 @@ static void openFile(App& app, const std::wstring& path) {
         return;
     }
     app.doc = std::move(doc);
+    buildToc(app.doc, app.toc);
     app.scrollY = 0.f;
+    app.outlineScroll = 0.f;
 
     std::wstring title = app.doc.name + L" \u2014 MD Reader";
     SetWindowTextW(app.hwnd, title.c_str());
@@ -110,8 +112,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 app->rt->SetDpi(app->dpi, app->dpi);
                 D2D1_SIZE_U sz = {(UINT)rc.right, (UINT)rc.bottom};
                 app->rt->Resize(sz);
-                layoutReset(*app);
-                ensureLayoutForView(*app);
+                reflowAnchor(*app);
                 InvalidateRect(h, nullptr, FALSE);
             }
         }
@@ -170,6 +171,18 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
             float dipX = (float)x * 96.f / app->dpi;
             float dipY = (float)y * 96.f / app->dpi;
+
+            if (dipY < app->toolbarH) {
+                D2D1_RECT_F b = outlineButtonRect(*app);
+                if (dipX >= b.left && dipX <= b.right && dipY >= b.top && dipY <= b.bottom)
+                    toggleOutline(*app);
+                return 0;
+            }
+            int hit = outlineHit(*app, dipX, dipY);
+            if (hit >= 0) {
+                scrollToBlock(*app, app->toc[(size_t)hit].blockIndex);
+                return 0;
+            }
             if (g.visible && dipX >= g.trackX - 6.f && dipX <= g.trackX + g.trackW + 6.f) {
                 if (dipY >= g.thumbY && dipY <= g.thumbY + g.thumbH) {
                     app->dragGrab = dipY - g.thumbY;
@@ -183,6 +196,18 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_MOUSEMOVE:
+        if (app && !app->dragThumb) {
+            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            float dipX = (float)mx * 96.f / app->dpi;
+            float dipY = (float)my * 96.f / app->dpi;
+            D2D1_RECT_F b = outlineButtonRect(*app);
+            int hover = -1;
+            if (dipX >= b.left && dipX <= b.right && dipY >= b.top && dipY <= b.bottom) hover = 0;
+            if (hover != app->hoverBtn) {
+                app->hoverBtn = hover;
+                InvalidateRect(h, nullptr, FALSE);
+            }
+        }
         if (app && app->dragThumb) {
             int y = GET_Y_LPARAM(lp);
             float dipY = (float)y * 96.f / app->dpi;
@@ -197,6 +222,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_MOUSEWHEEL:
         if (app) {
+            POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ScreenToClient(h, &pt);
+            if (app->showOutline && (float)pt.x * 96.f / app->dpi >= app->contentRight()) {
+                scrollOutline(*app, -GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 78.f);
+                return 0;
+            }
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             UINT lines = 3;
             SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
@@ -209,15 +240,18 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         if (app) {
             bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             switch (wp) {
-            case VK_NEXT: scrollTo(*app, app->scrollY + app->vh * 0.92f); return 0;
-            case VK_PRIOR: scrollTo(*app, app->scrollY - app->vh * 0.92f); return 0;
+            case VK_NEXT: scrollTo(*app, app->scrollY + app->viewH() * 0.92f); return 0;
+            case VK_PRIOR: scrollTo(*app, app->scrollY - app->viewH() * 0.92f); return 0;
             case VK_HOME: scrollTo(*app, 0.f); return 0;
             case VK_END: scrollTo(*app, app->lay.contentH); return 0;
             case VK_DOWN: scrollTo(*app, app->scrollY + 48.f); return 0;
             case VK_UP: scrollTo(*app, app->scrollY - 48.f); return 0;
-            case VK_SPACE: scrollTo(*app, app->scrollY + app->vh * 0.92f); return 0;
+            case VK_SPACE: scrollTo(*app, app->scrollY + app->viewH() * 0.92f); return 0;
             case 'O':
                 if (ctrl) { openDialog(*app); return 0; }
+                break;
+            case 'B':
+                if (ctrl) { toggleOutline(*app); return 0; }
                 break;
             }
         }
