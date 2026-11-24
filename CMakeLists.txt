@@ -15,8 +15,13 @@ add_executable(mdreader WIN32
     src/main.cpp
     src/graphics.cpp
     src/layout.cpp
-    src/doc.cpp)
-target_link_libraries(mdreader PRIVATE md4c d2d1 dwrite ole32 comdlg32 shell32 dwmapi uxtheme)
+    src/doc.cpp
+    src/editor.cpp
+    src/chrome.cpp
+    src/source.cpp
+    src/images.cpp
+    src/highlight.cpp)
+target_link_libraries(mdreader PRIVATE md4c d2d1 dwrite ole32 comdlg32 shell32 dwmapi uxtheme imm32 windowscodecs shlwapi uuid)
 
 if(MSVC)
     set_property(TARGET mdreader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
