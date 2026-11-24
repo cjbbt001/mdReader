@@ -6,7 +6,7 @@ def make(size):
     im = Image.new('RGBA', (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
 
-    ink = (0x5A, 0x5A, 0x5A, 255)
+    ink = (0x1A, 0x1A, 0x1A, 255)
     lw = max(2, int(round(s * 0.042)))
 
     # page with a folded top-right corner (one closed polygon -> clean joins)
@@ -15,7 +15,7 @@ def make(size):
     fold = s * 0.175
     rx = R - fold
     body = [(L, T), (rx, T), (R, T + fold), (R, B), (L, B)]
-    d.polygon(body, outline=ink, width=lw)
+    d.polygon(body, fill=(255, 255, 255, 255), outline=ink, width=lw)
     # the fold line
     d.line([(rx, T), (rx, T + fold), (R, T + fold)], fill=ink, width=lw, joint='curve')
 
