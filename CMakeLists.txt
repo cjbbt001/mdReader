@@ -11,7 +11,7 @@ add_library(md4c STATIC
     third_party/md4c/entity.c)
 target_include_directories(md4c PUBLIC third_party/md4c)
 
-add_executable(mdreader WIN32
+add_executable(MdReader WIN32
     src/main.cpp
     src/graphics.cpp
     src/layout.cpp
@@ -21,10 +21,10 @@ add_executable(mdreader WIN32
     src/source.cpp
     src/images.cpp
     src/highlight.cpp)
-target_link_libraries(mdreader PRIVATE md4c d2d1 dwrite ole32 comdlg32 shell32 dwmapi uxtheme imm32 windowscodecs shlwapi uuid)
+target_link_libraries(MdReader PRIVATE md4c d2d1 dwrite ole32 comdlg32 shell32 dwmapi uxtheme imm32 windowscodecs shlwapi uuid)
 
 if(MSVC)
-    set_property(TARGET mdreader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-    target_compile_options(mdreader PRIVATE /utf-8)
+    set_property(TARGET MdReader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    target_compile_options(MdReader PRIVATE /utf-8)
     target_compile_options(md4c PRIVATE /utf-8)
 endif()

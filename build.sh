@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build mdreader.exe with the bundled w64devkit toolchain (no MSVC required).
+# Build MdReader.exe with the bundled w64devkit toolchain (no MSVC required).
 # Usage: sh build.sh
 set -e
 cd "$(dirname "$0")"
@@ -20,8 +20,8 @@ g++ -std=c++20 -O2 -mwindows -fno-exceptions -fno-rtti \
     -Isrc -Ithird_party/md4c \
     src/main.cpp src/graphics.cpp src/layout.cpp src/doc.cpp src/editor.cpp src/images.cpp src/highlight.cpp src/chrome.cpp src/source.cpp \
     build/md4c.o build/entity.o build/mdreader.res.o \
-    -o build/mdreader.exe \
+    -o build/MdReader.exe \
     -ld2d1 -ldwrite -limm32 -lwindowscodecs -lshlwapi -lole32 -lcomdlg32 -lshell32 -ldwmapi -luxtheme -luuid -lgdi32 -luser32 \
     -static -static-libgcc -s
 
-ls -l build/mdreader.exe
+ls -l build/MdReader.exe

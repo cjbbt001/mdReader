@@ -291,21 +291,23 @@ void drawTabStrip(App& app) {
     app.rt->FillRectangle(rect(0.f, 0.f, app.vw, app.tabStripH), app.brPanel.get());
 
     {
-        // Folder mark drawn with the theme's text colour so it sits on the
-        // caption background instead of carrying a white plate.
+        // Page-with-folded-corner mark in the theme's text colour, so it sits on
+        // the caption background instead of carrying a white plate.
         D2D1_RECT_F ir = captionIconRect(app);
         float w = ir.right - ir.left, h = ir.bottom - ir.top;
-        float L = ir.left + w * 0.08f, R = ir.right - w * 0.06f;
-        float T = ir.top + h * 0.24f, TB = ir.top + h * 0.38f, B = ir.bottom - h * 0.16f;
-        float TE = ir.left + w * 0.44f, SL = w * 0.12f;
+        float L = ir.left + w * 0.20f, R = ir.left + w * 0.80f;
+        float T = ir.top + h * 0.10f, B = ir.top + h * 0.92f;
+        float fold = w * 0.24f;
+        float rx = R - fold;
         ID2D1Brush* fg = app.brText.get();
-        float lw = 1.25f;
-        app.rt->DrawLine(D2D1_POINT_2F{L, T}, D2D1_POINT_2F{TE, T}, fg, lw);
-        app.rt->DrawLine(D2D1_POINT_2F{TE, T}, D2D1_POINT_2F{TE + SL, TB}, fg, lw);
-        app.rt->DrawLine(D2D1_POINT_2F{TE + SL, TB}, D2D1_POINT_2F{R, TB}, fg, lw);
-        app.rt->DrawLine(D2D1_POINT_2F{R, TB}, D2D1_POINT_2F{R, B}, fg, lw);
-        app.rt->DrawLine(D2D1_POINT_2F{R, B}, D2D1_POINT_2F{L, B}, fg, lw);
-        app.rt->DrawLine(D2D1_POINT_2F{L, B}, D2D1_POINT_2F{L, T}, fg, lw);
+        float lw = 1.15f;
+        app.rt->DrawLine(D2D1_POINT_2F{L, B}, D2D1_POINT_2F{R, B}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{R, B}, D2D1_POINT_2F{R, T + fold}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{R, T + fold}, D2D1_POINT_2F{rx, T + fold}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{rx, T + fold}, D2D1_POINT_2F{rx, T}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{rx, T}, D2D1_POINT_2F{L, T}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{L, T}, D2D1_POINT_2F{L, B}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{rx, T}, D2D1_POINT_2F{R, T + fold}, fg, lw);
     }
 
     float tabsLimit = app.vw - kCapBtnW * 3.f - 6.f;

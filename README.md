@@ -1,4 +1,4 @@
-# MD Reader
+# MdReader
 
 Windows 上的极简 Markdown 阅读器 / 编辑器。Win32 + Direct2D + DirectWrite + md4c，C++20，无框架。单文件 1.4 MB，静态链接，不依赖 VC 运行库。
 
@@ -60,14 +60,14 @@ Windows 上的极简 Markdown 阅读器 / 编辑器。Win32 + Direct2D + DirectW
 
 ## 下载与安装
 
-从 [Releases](https://github.com/cjbbt001/mdReader/releases) 下载 `MDReader-win64.zip`，解压即用（单个 exe，不写注册表）。
+从 [Releases](https://github.com/cjbbt001/mdReader/releases) 下载 `MdReader-win64.zip`，解压即用（单个 exe，不写注册表）。
 
 想要桌面快捷方式：把 exe 放到任意目录，右键 → 发送到 → 桌面快捷方式。
 
 ```
-mdreader.exe <文件.md>
-mdreader.exe <文件.md> --dark | --light      强制主题
-mdreader.exe --register | --unregister      写入 / 删除 .md 文件关联
+MdReader.exe <文件.md>
+MdReader.exe <文件.md> --dark | --light      强制主题
+MdReader.exe --register | --unregister      写入 / 删除 .md 文件关联
 ```
 
 ## 构建
@@ -75,7 +75,7 @@ mdreader.exe --register | --unregister      写入 / 删除 .md 文件关联
 不需要 Visual Studio。装一个 MinGW-w64，把 `g++` / `gcc` / `windres` 放进 PATH（本机用便携版 [w64devkit](https://github.com/skeeto/w64devkit)，解压到 `.tools/w64devkit` 即可，`build.sh` 会自动找），然后：
 
 ```sh
-sh build.sh          # -> build/mdreader.exe
+sh build.sh          # -> build/MdReader.exe
 ```
 
 MSVC：`cmake -B build-msvc -G "Visual Studio 17 2022" && cmake --build build-msvc --config Release`。
@@ -86,12 +86,12 @@ Windows 11 23H2，2048×1152 @125%：
 
 | 项目 | 数值 |
 | --- | --- |
-| 二进制 | 1,486,336 字节（zip 约 596 KB） |
+| 二进制 | 1,489,408 字节（zip 约 596 KB） |
 | 窗口可见 | 47–78 ms |
 | 首帧内容 | 约 100 ms |
 | 空窗口内存 | 42 MB 工作集 |
 | 单帧绘制（1080×900） | 2–5 ms |
-| 源码 | 约 4,650 行 |
+| 源码 | 约 4,700 行 |
 
 ## 设计取舍
 

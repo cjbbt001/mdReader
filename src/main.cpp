@@ -120,7 +120,7 @@ void setTitle(App& app) {
     // The caption is custom-drawn (tabs replace the title text); the window text
     // only feeds the taskbar and Alt+Tab.
     (void)app;
-    SetWindowTextW(app.hwnd, L"MD Reader");
+    SetWindowTextW(app.hwnd, L"MdReader");
 }
 
 }  // namespace
@@ -156,7 +156,7 @@ void openPath(App& app, const std::wstring& pathIn) {
     bool ok = false;
     std::wstring text = readAllText(path, &ok);
     if (!ok) {
-        MessageBoxW(app.hwnd, L"无法打开文件", L"MD Reader", MB_ICONWARNING);
+        MessageBoxW(app.hwnd, L"无法打开文件", L"MdReader", MB_ICONWARNING);
         return;
     }
     newTab(app, path, text);
@@ -179,7 +179,7 @@ void closeTab(App& app, int index) {
         app.active = index;
         std::wstring name = app.tab().name.empty() ? L"无标题" : app.tab().name;
         std::wstring msg = name + L" 尚未保存，要保存吗？";
-        int r = MessageBoxW(app.hwnd, msg.c_str(), L"MD Reader", MB_YESNOCANCEL | MB_ICONWARNING);
+        int r = MessageBoxW(app.hwnd, msg.c_str(), L"MdReader", MB_YESNOCANCEL | MB_ICONWARNING);
         if (r == IDCANCEL) return;
         if (r == IDYES && !saveTab(app)) return;
     }
@@ -236,7 +236,7 @@ bool saveTab(App& app) {
         return !t.path.empty();
     }
     if (!writeAllText(t.path, t.ed.text())) {
-        MessageBoxW(app.hwnd, L"保存失败", L"MD Reader", MB_ICONWARNING);
+        MessageBoxW(app.hwnd, L"保存失败", L"MdReader", MB_ICONWARNING);
         return false;
     }
     t.dirty = false;
@@ -327,7 +327,7 @@ bool isImageExt(const std::wstring& path) {
 bool attachmentDir(App& app, std::wstring* dir, std::wstring* rel) {
     if (!app.hasTab() || app.tab().path.empty()) {
         MessageBoxW(app.hwnd, L"\u5148\u628a\u6587\u6863\u4fdd\u5b58\u5230\u78c1\u76d8\uff0c\u56fe\u7247\u4f1a\u653e\u5230\u540c\u7ea7\u76ee\u5f55\u7684 attachment \u6587\u4ef6\u5939",
-                    L"MD Reader", MB_ICONINFORMATION);
+                    L"MdReader", MB_ICONINFORMATION);
         return false;
     }
     const std::wstring& p = app.tab().path;
@@ -763,19 +763,23 @@ void saveState(App& app) {
 // ------------------------------------------------------------------ shell
 
 void registerShell(bool install) {
-    const wchar_t* kProgId = L"MDReader.md";
+    const wchar_t* kProgId = L"MdReader.md";
     std::wstring exe = exePath();
     std::wstring quoted = L"\"" + exe + L"\" \"%1\"";
     if (install) {
+        // Drop keys written by the previous product name.
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\Classes\MDReader.md");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\Classes\Applications\mdreader.exe");
+
         HKEY k;
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\MDReader.md", 0, nullptr, 0,
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\MdReader.md", 0, nullptr, 0,
                             KEY_WRITE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
             const wchar_t* desc = L"Markdown Document";
             RegSetValueExW(k, nullptr, 0, REG_SZ, (const BYTE*)desc,
                            (DWORD)((wcslen(desc) + 1) * sizeof(wchar_t)));
             RegCloseKey(k);
         }
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\MDReader.md\\DefaultIcon", 0,
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\MdReader.md\\DefaultIcon", 0,
                             nullptr, 0, KEY_WRITE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
             std::wstring icon = exe + L",0";
             RegSetValueExW(k, nullptr, 0, REG_SZ, (const BYTE*)icon.c_str(),
@@ -783,7 +787,7 @@ void registerShell(bool install) {
             RegCloseKey(k);
         }
         if (RegCreateKeyExW(HKEY_CURRENT_USER,
-                            L"Software\\Classes\\MDReader.md\\shell\\open\\command", 0, nullptr, 0,
+                            L"Software\\Classes\\MdReader.md\\shell\\open\\command", 0, nullptr, 0,
                             KEY_WRITE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
             RegSetValueExW(k, nullptr, 0, REG_SZ, (const BYTE*)quoted.c_str(),
                            (DWORD)((quoted.size() + 1) * sizeof(wchar_t)));
@@ -795,15 +799,35 @@ void registerShell(bool install) {
             RegCloseKey(k);
         }
         if (RegCreateKeyExW(HKEY_CURRENT_USER,
-                            L"Software\\Classes\\Applications\\mdreader.exe\\shell\\open\\command", 0,
+                            L"Software\\Classes\\Applications\\MdReader.exe\\shell\\open\\command", 0,
                             nullptr, 0, KEY_WRITE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
             RegSetValueExW(k, nullptr, 0, REG_SZ, (const BYTE*)quoted.c_str(),
                            (DWORD)((quoted.size() + 1) * sizeof(wchar_t)));
             RegCloseKey(k);
         }
+        // Name shown in "Open with" and in Settings > Default apps.
+        if (RegCreateKeyExW(HKEY_CURRENT_USER,
+                            L"Software\\Classes\\Applications\\MdReader.exe\\Application", 0,
+                            nullptr, 0, KEY_WRITE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
+            const wchar_t* friendly = L"MdReader";
+            RegSetValueExW(k, L"FriendlyAppName", 0, REG_SZ, (const BYTE*)friendly,
+                           (DWORD)((wcslen(friendly) + 1) * sizeof(wchar_t)));
+            const wchar_t* appName = L"MdReader.exe";
+            RegSetValueExW(k, L"ApplicationName", 0, REG_SZ, (const BYTE*)appName,
+                           (DWORD)((wcslen(appName) + 1) * sizeof(wchar_t)));
+            RegCloseKey(k);
+        }
+        // Also list it in the classic "Open with" menu for .md.
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\.md\\OpenWithList", 0,
+                            nullptr, 0, KEY_WRITE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
+            const wchar_t* exeName = L"MdReader.exe";
+            RegSetValueExW(k, L"a", 0, REG_SZ, (const BYTE*)exeName,
+                           (DWORD)((wcslen(exeName) + 1) * sizeof(wchar_t)));
+            RegCloseKey(k);
+        }
     } else {
-        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\MDReader.md");
-        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\mdreader.exe");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\MdReader.md");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\MdReader.exe");
         HKEY k;
         if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\.md\\OpenWithProgids", 0,
                           KEY_WRITE, &k) == ERROR_SUCCESS) {
@@ -823,7 +847,7 @@ void openHelp(App& app) {
         L"预览模式：滚轮、PageUp/PageDown、Home/End、空格\n"
         L"源码模式：方向键、Home/End、Ctrl+左右（按词移动）\n\n"
         L"启动参数：--dark / --light 强制主题，--register / --unregister 文件关联\n";
-    MessageBoxW(app.hwnd, msg.c_str(), L"MD Reader", MB_OK);
+    MessageBoxW(app.hwnd, msg.c_str(), L"MdReader", MB_OK);
 }
 
 
@@ -1048,7 +1072,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_INIT:
         if (app) {
             if (!initGraphics(*app)) {
-                MessageBoxW(h, L"Direct2D \u521d\u59cb\u5316\u5931\u8d25", L"MD Reader", MB_ICONERROR);
+                MessageBoxW(h, L"Direct2D \u521d\u59cb\u5316\u5931\u8d25", L"MdReader", MB_ICONERROR);
                 return 0;
             }
             app->dpi = (float)dpiOf(h);
@@ -1318,7 +1342,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"MDReader.SingleInstance");
     if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
-        HWND prev = FindWindowW(L"MDReaderWindow", nullptr);
+        HWND prev = FindWindowW(L"MdReaderWindow", nullptr);
         if (prev) {
             if (!openArg.empty()) {
                 COPYDATASTRUCT cds = {};
@@ -1339,10 +1363,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
     wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
-    wc.lpszClassName = L"MDReaderWindow";
+    wc.lpszClassName = L"MdReaderWindow";
     if (!RegisterClassExW(&wc)) return 1;
 
-    HWND hwnd = CreateWindowExW(0, L"MDReaderWindow", L"MD Reader", WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowExW(0, L"MdReaderWindow", L"MdReader", WS_OVERLAPPEDWINDOW,
                                 CW_USEDEFAULT, CW_USEDEFAULT, 1100, 900, nullptr, nullptr, hInst,
                                 &app);
     if (!hwnd) return 1;
