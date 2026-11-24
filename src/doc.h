@@ -2,13 +2,14 @@
 #include "common.h"
 #include <vector>
 
-enum class BKind { Para, Heading, Code, Quote, Bullet, Ordered, Rule, Table };
+enum class BKind { Para, Heading, Code, Quote, Bullet, Ordered, Rule, Table, Image };
 
 // One styled slice of inline text.
 struct Run {
     std::wstring text;
     bool bold = false, italic = false, code = false, strike = false;
     bool link = false;
+    int tok = 0;  // 0 none, 1 keyword, 2 string, 3 comment, 4 number
 };
 
 struct Block {
@@ -22,6 +23,8 @@ struct Block {
     std::wstring lang;
     std::vector<std::vector<std::wstring>> cells;  // Table
     int headerRows = 0;
+    std::wstring imgSrc, imgAlt;   // Image
+    bool task = false, checked = false;  // task list item
 };
 
 struct TocEntry {
@@ -38,4 +41,5 @@ struct Doc {
 };
 
 bool loadDoc(const std::wstring& path, Doc& doc, std::wstring& err);
+bool parseText(const std::wstring& text, Doc& doc);
 void buildToc(const Doc& doc, std::vector<TocEntry>& out);

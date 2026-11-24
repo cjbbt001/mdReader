@@ -93,6 +93,13 @@ ComPtr<IDWriteTextLayout> makeLayout(App& app, const std::vector<Run>& runs,
             tl->SetDrawingEffect(app.brCodeText.get(), range);
         }
         if (sp.r->link) tl->SetDrawingEffect(app.brLink.get(), range);
+        switch (sp.r->tok) {
+        case 1: tl->SetDrawingEffect(app.brKw.get(), range); break;
+        case 2: tl->SetDrawingEffect(app.brStr.get(), range); break;
+        case 3: tl->SetDrawingEffect(app.brCom.get(), range); break;
+        case 4: tl->SetDrawingEffect(app.brNum.get(), range); break;
+        default: break;
+        }
     }
     return tl;
 }
@@ -189,10 +196,29 @@ Item layoutBlock(App& app, const Block& b, float y, float cx, float cw) {
     if (isList) { x += 20.f; w -= 20.f; }
     if (w < 60.f) w = 60.f;
 
+    if (b.kind == BKind::Image) {
+        std::wstring path = app.hasTab() ? resolveImagePath(app.tab(), b.imgSrc) : b.imgSrc;
+        UINT iw = 0, ih = 0;
+        int state = 0;
+        bool known = imageInfo(path, &iw, &ih, &state);
+        const float maxW = std::max(80.f, cw - b.quoteDepth * kQuoteIndent - b.listDepth * kListIndent);
+        float drawW = known ? std::min((float)iw, maxW) : maxW;
+        float drawH = known ? drawW * (float)ih / (float)iw : drawW * 0.5625f;
+        if (drawH > 4000.f) drawH = 4000.f;
+        it.x = cx + b.quoteDepth * kQuoteIndent + b.listDepth * kListIndent;
+        it.w = drawW;
+        it.h = drawH;
+        it.imgPath = path;
+        if (app.hasTab()) requestImage(app, path);
+        return it;
+    }
+
     if (b.kind == BKind::Code) {
         std::wstring code = b.code;
         while (!code.empty() && (code.back() == L'\n' || code.back() == L'\r')) code.pop_back();
-        it.tl = makeLayout(app, singleRun(code), app.fmtCode.get(), std::max(60.f, w - kCodePad * 2));
+        std::vector<Run> codeRuns;
+        highlightCode(code, b.lang, codeRuns);
+        it.tl = makeLayout(app, codeRuns, app.fmtCode.get(), std::max(60.f, w - kCodePad * 2));
         float h = layoutHeight(it.tl.get());
         it.h = h + kCodePad * 2;
         it.x = x;
@@ -203,7 +229,7 @@ Item layoutBlock(App& app, const Block& b, float y, float cx, float cw) {
     IDWriteTextFormat* fmt = app.fmtBody.get();
     if (b.kind == BKind::Heading) {
         int lv = b.level < 1 ? 1 : (b.level > 6 ? 6 : b.level);
-        fmt = app.fmtH[lv - 1].get();
+        fmt = app.fmtHead[lv - 1].get();
     }
     it.tl = makeLayout(app, b.runs, fmt, w);
     float h = layoutHeight(it.tl.get());
@@ -212,7 +238,7 @@ Item layoutBlock(App& app, const Block& b, float y, float cx, float cw) {
     it.w = w;
 
     if (b.kind == BKind::Bullet) {
-        it.marker = L"\u2022";
+        it.marker = b.task ? L"[]" : L"\u2022";
         it.markerRight = false;
     } else if (b.kind == BKind::Ordered) {
         it.marker = std::to_wstring(b.number) + L".";
@@ -224,29 +250,29 @@ Item layoutBlock(App& app, const Block& b, float y, float cx, float cw) {
 }  // namespace
 
 void layoutReset(App& app) {
-    app.lay.items.clear();
-    app.lay.blockY.assign(app.doc.blocks.size(), 0.f);
-    app.lay.next = 0;
-    app.lay.contentH = kMarginTop;
-    app.lay.done = app.doc.blocks.empty();
+    app.tab().lay.items.clear();
+    app.tab().lay.blockY.assign(app.tab().doc.blocks.size(), 0.f);
+    app.tab().lay.next = 0;
+    app.tab().lay.contentH = kMarginTop;
+    app.tab().lay.done = app.tab().doc.blocks.empty();
 }
 
 void relayoutFrom(App& app, size_t blockIndex) {
-    Layout& L = app.lay;
-    if (blockIndex > app.doc.blocks.size()) blockIndex = app.doc.blocks.size();
+    Layout& L = app.tab().lay;
+    if (blockIndex > app.tab().doc.blocks.size()) blockIndex = app.tab().doc.blocks.size();
     while (!L.items.empty() && (size_t)L.items.back().blockIndex >= blockIndex) L.items.pop_back();
     L.next = blockIndex;
     L.done = false;
     L.contentH = L.items.empty()
                      ? kMarginTop
                      : L.items.back().y + L.items.back().h +
-                           gapAfter(app.doc.blocks[(size_t)L.items.back().blockIndex]);
+                           gapAfter(app.tab().doc.blocks[(size_t)L.items.back().blockIndex]);
 }
 
 int blockAtScroll(const App& app) {
     int best = 0;
-    for (const auto& it : app.lay.items) {
-        if (it.y <= app.scrollY + 1.f) best = it.blockIndex;
+    for (const auto& it : app.tab().lay.items) {
+        if (it.y <= app.tab().scrollY + 1.f) best = it.blockIndex;
         else break;
     }
     return best;
@@ -256,21 +282,21 @@ void reflowAnchor(App& app) {
     int anchor = blockAtScroll(app);
     layoutReset(app);
     ensureLayoutForView(app);
-    if (anchor >= 0 && (size_t)anchor < app.lay.blockY.size())
-        scrollTo(app, app.lay.blockY[(size_t)anchor]);
+    if (anchor >= 0 && (size_t)anchor < app.tab().lay.blockY.size())
+        scrollTo(app, app.tab().lay.blockY[(size_t)anchor]);
     else
         scrollTo(app, 0.f);
 }
 
 void layoutStep(App& app, float untilY, int budgetMs) {
-    Layout& L = app.lay;
+    Layout& L = app.tab().lay;
     if (L.done) return;
     DWORD t0 = GetTickCount();
     float cw = contentW(app);
     float cx = contentX(app);
 
-    while (L.next < app.doc.blocks.size()) {
-        const Block& b = app.doc.blocks[L.next];
+    while (L.next < app.tab().doc.blocks.size()) {
+        const Block& b = app.tab().doc.blocks[L.next];
         Item it = layoutBlock(app, b, L.contentH, cx, cw);
         it.blockIndex = (int)L.next;
         L.contentH = it.y + it.h + gapAfter(b);
@@ -281,7 +307,7 @@ void layoutStep(App& app, float untilY, int budgetMs) {
         if ((int)(GetTickCount() - t0) >= budgetMs) break;
     }
 
-    if (L.next >= app.doc.blocks.size()) {
+    if (L.next >= app.tab().doc.blocks.size()) {
         L.done = true;
         L.contentH += kMarginBottom;
     }

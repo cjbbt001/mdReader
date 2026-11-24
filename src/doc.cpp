@@ -14,7 +14,8 @@ struct Ctx {
     std::vector<bool> orderedStack;
     std::vector<int> nextNumberStack;
     bool bold = false, italic = false, code = false, strike = false;
-    std::wstring href;
+    int inImage = 0;
+    std::wstring href, imgSrc, imgAlt;
 
     // table
     bool inCell = false;
@@ -40,6 +41,7 @@ bool isCjk(wchar_t ch) { return ch >= 0x2E80 && ch <= 0xFFEF; }
 
 void addText(Ctx& c, const wchar_t* s, size_t n) {
     if (!n) return;
+    if (c.inImage) { c.imgAlt.append(s, n); return; }
     if (c.inCell) { c.cell.append(s, n); return; }
     if (c.cur >= c.doc->blocks.size()) return;
     Block& b = c.doc->blocks[c.cur];
@@ -98,6 +100,11 @@ int onEnterBlock(MD_BLOCKTYPE t, void* d, void* ud) {
         bool ord = !c.orderedStack.empty() && c.orderedStack.back();
         Block& b = pushBlock(c, ord ? BKind::Ordered : BKind::Bullet);
         if (ord && !c.nextNumberStack.empty()) b.number = c.nextNumberStack.back()++;
+        auto* li = (MD_BLOCK_LI_DETAIL*)d;
+        if (li && li->is_task) {
+            b.task = true;
+            b.checked = (li->task_mark == 'x' || li->task_mark == 'X');
+        }
         break;
     }
     case MD_BLOCK_H: {
@@ -204,6 +211,14 @@ int onEnterSpan(MD_SPANTYPE t, void* d, void* ud) {
         if (a && a->href.text) c.href = widen(a->href.text, a->href.size);
         break;
     }
+    case MD_SPAN_IMG: {
+        auto* im = (MD_SPAN_IMG_DETAIL*)d;
+        c.inImage++;
+        c.imgSrc.clear();
+        c.imgAlt.clear();
+        if (im && im->src.text) c.imgSrc = widen(im->src.text, im->src.size);
+        break;
+    }
     default: break;
     }
     return 0;
@@ -218,6 +233,23 @@ int onLeaveSpan(MD_SPANTYPE t, void* d, void* ud) {
     case MD_SPAN_CODE: c.code = false; break;
     case MD_SPAN_DEL: c.strike = false; break;
     case MD_SPAN_A: c.href.clear(); break;
+    case MD_SPAN_IMG: {
+        if (c.inImage) c.inImage--;
+        Block* b = curBlock(c);
+        if (!b) break;
+        bool alone = b->kind == BKind::Para && b->runs.empty() && b->code.empty();
+        if (alone) {
+            b->kind = BKind::Image;
+            b->imgSrc = c.imgSrc;
+            b->imgAlt = c.imgAlt;
+        } else {
+            Run r;
+            r.text = c.imgAlt.empty() ? L"[图片]" : c.imgAlt;
+            r.italic = true;
+            b->runs.push_back(std::move(r));
+        }
+        break;
+    }
     default: break;
     }
     return 0;
@@ -263,6 +295,28 @@ int onText(MD_TEXTTYPE t, const MD_CHAR* s, MD_SIZE n, void* ud) {
 }
 
 }  // namespace
+
+bool parseText(const std::wstring& text, Doc& doc) {
+    int need = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0, nullptr,
+                                   nullptr);
+    std::string utf8((size_t)need, ' ');
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), &utf8[0], need, nullptr, nullptr);
+
+    Ctx c;
+    c.doc = &doc;
+    doc.blocks.clear();
+
+    MD_PARSER parser = {};
+    parser.abi_version = 0;
+    parser.flags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
+                   MD_FLAG_PERMISSIVEURLAUTOLINKS | MD_FLAG_NOHTML;
+    parser.enter_block = onEnterBlock;
+    parser.leave_block = onLeaveBlock;
+    parser.enter_span = onEnterSpan;
+    parser.leave_span = onLeaveSpan;
+    parser.text = onText;
+    return md_parse(utf8.c_str(), (MD_SIZE)utf8.size(), &parser, &c) == 0;
+}
 
 bool loadDoc(const std::wstring& path, Doc& doc, std::wstring& err) {
     std::ifstream f(path.c_str(), std::ios::binary);

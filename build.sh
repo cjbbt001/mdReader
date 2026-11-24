@@ -18,10 +18,10 @@ gcc -std=c99 -O2 -c third_party/md4c/entity.c -o build/entity.o
 
 g++ -std=c++20 -O2 -mwindows -fno-exceptions -fno-rtti \
     -Isrc -Ithird_party/md4c \
-    src/main.cpp src/graphics.cpp src/layout.cpp src/doc.cpp \
+    src/main.cpp src/graphics.cpp src/layout.cpp src/doc.cpp src/editor.cpp src/images.cpp src/highlight.cpp src/chrome.cpp src/source.cpp \
     build/md4c.o build/entity.o build/mdreader.res.o \
     -o build/mdreader.exe \
-    -ld2d1 -ldwrite -lole32 -lcomdlg32 -lshell32 -ldwmapi -luxtheme -luuid -lgdi32 -luser32 \
+    -ld2d1 -ldwrite -limm32 -lwindowscodecs -lshlwapi -lole32 -lcomdlg32 -lshell32 -ldwmapi -luxtheme -luuid -lgdi32 -luser32 \
     -static -static-libgcc -s
 
 ls -l build/mdreader.exe

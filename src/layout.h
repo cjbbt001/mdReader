@@ -12,6 +12,7 @@ struct Item {
     int level = 0;
     int quoteDepth = 0;
     std::wstring marker;      // bullet / "1."
+    std::wstring imgPath;     // resolved image path
     bool markerRight = false;
 
     // Table
