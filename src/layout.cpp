@@ -232,6 +232,12 @@ Item layoutBlock(App& app, const Block& b, float y, float cx, float cw) {
         fmt = app.fmtHead[lv - 1].get();
     }
     it.tl = makeLayout(app, b.runs, fmt, w);
+    if (it.tl) {
+        DWRITE_LINE_METRICS lm[2] = {};
+        UINT32 count = 0;
+        if (SUCCEEDED(it.tl->GetLineMetrics(lm, 2, &count)) && count > 0 && lm[0].baseline > 0.f)
+            it.baseline = lm[0].baseline;
+    }
     float h = layoutHeight(it.tl.get());
     it.h = h > 0.f ? h : 10.f;
     it.x = x;

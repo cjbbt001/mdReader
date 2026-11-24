@@ -8,6 +8,7 @@ enum class ChromeAction {
     SelectTab,
     Outline,
     ToggleMode,
+    ToggleTheme,
     H1,
     H2,
     H3,

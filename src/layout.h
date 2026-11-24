@@ -11,6 +11,7 @@ struct Item {
 
     int level = 0;
     int quoteDepth = 0;
+    float baseline = 20.f;   // first line baseline, relative to y
     std::wstring marker;      // bullet / "1."
     std::wstring imgPath;     // resolved image path
     bool markerRight = false;

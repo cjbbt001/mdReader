@@ -84,6 +84,9 @@ void toggleMode(App& app);
 bool saveTab(App& app);           // false when cancelled/failed
 void saveTabAs(App& app);
 void syncEditorToPreview(App& app);  // re-parse the buffer, re-anchor the view
+void previewEditAt(App& app, int blockIndex);
+int blockAtViewPoint(App& app, float x, float y);
+int sourceLineForBlock(Tab& t, int blockIndex);
 
 // ---- layout / scrolling ----
 void scrollTo(App& app, float y);

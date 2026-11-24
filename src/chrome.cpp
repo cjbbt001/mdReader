@@ -4,10 +4,10 @@
 #include <cmath>
 
 const ToolButton kToolButtons[] = {
-    // left: document + view
+    // left: open, view mode, theme
     {ChromeAction::Open, L"打开 (Ctrl+O)", false, ToolGroup::Left},
-    {ChromeAction::Save, L"保存 (Ctrl+S)", false, ToolGroup::Left},
     {ChromeAction::ToggleMode, L"源码/预览 (Ctrl+E)", false, ToolGroup::Left},
+    {ChromeAction::ToggleTheme, L"深色/浅色", false, ToolGroup::Left},
 
     // middle: markdown commands
     {ChromeAction::H1, L"一级标题", true, ToolGroup::Middle},
@@ -22,8 +22,8 @@ const ToolButton kToolButtons[] = {
     {ChromeAction::Link, L"链接 (Ctrl+K)", true, ToolGroup::Middle},
     {ChromeAction::Image, L"图片", true, ToolGroup::Middle},
 
-    // right: panel + search
-    {ChromeAction::Find, L"查找 (Ctrl+F)", false, ToolGroup::Right},
+    // right: save + panel
+    {ChromeAction::Save, L"保存 (Ctrl+S)", false, ToolGroup::Right},
     {ChromeAction::Outline, L"大纲 (Ctrl+J)", false, ToolGroup::Right},
 };
 const int kToolButtonCount = (int)(sizeof(kToolButtons) / sizeof(kToolButtons[0]));
@@ -127,10 +127,26 @@ void drawIcon(App& app, ChromeAction a, D2D1_RECT_F r, ID2D1Brush* fg) {
         line(cx - 6.f, cy - 3.f, cx - 1.f, cy - 3.f, 1.1f);
         line(cx - 6.f, cy, cx - 1.f, cy, 1.1f);
         break;
-    case ChromeAction::Find:
-        app.rt->DrawEllipse(D2D1_ELLIPSE{D2D1_POINT_2F{cx - 1.5f, cy - 1.5f}, 5.5f, 5.5f}, fg, 1.4f);
-        line(cx + 2.5f, cy + 2.5f, cx + 7.f, cy + 7.f, 1.6f);
+    case ChromeAction::ToggleTheme: {
+        bool dark = app.themeDark;
+        if (!dark) {
+            // sun: circle plus eight rays
+            app.rt->DrawEllipse(D2D1_ELLIPSE{D2D1_POINT_2F{cx, cy}, 3.4f, 3.4f}, fg, 1.3f);
+            for (int k = 0; k < 8; ++k) {
+                float a = (float)k * 3.14159265f / 4.f;
+                float dx = std::cos(a), dy = std::sin(a);
+                line(cx + dx * 5.6f, cy + dy * 5.6f, cx + dx * 7.6f, cy + dy * 7.6f, 1.2f);
+            }
+        } else {
+            // moon: crescent
+            app.rt->FillEllipse(D2D1_ELLIPSE{D2D1_POINT_2F{cx - 0.6f, cy}, 6.2f, 6.2f}, fg);
+            ComPtr<ID2D1SolidColorBrush> bg;
+            app.rt->CreateSolidColorBrush(app.th.bg, bg.put());
+            app.rt->FillEllipse(D2D1_ELLIPSE{D2D1_POINT_2F{cx + 3.4f, cy - 2.6f}, 5.6f, 5.6f},
+                                bg.get());
+        }
         break;
+    }
     case ChromeAction::H1: text(L"H1", app.fmtIcon.get()); break;
     case ChromeAction::H2: text(L"H2", app.fmtIcon.get()); break;
     case ChromeAction::H3: text(L"H3", app.fmtIcon.get()); break;
@@ -226,7 +242,7 @@ D2D1_RECT_F newTabRect(const App& app) {
     float x = 8.f;
     App& a = const_cast<App&>(app);
     for (int i = 0; i < (int)app.tabs.size(); ++i) x += tabWidth(a, i) + 2.f;
-    return rect(x + 2.f, 6.f, x + 30.f, app.tabStripH - 6.f);
+    return rect(x + 2.f, 4.f, x + 30.f, app.tabStripH - 2.f);
 }
 
 D2D1_RECT_F closeTabRect(const App& app, int index) {

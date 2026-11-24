@@ -27,13 +27,11 @@ void drawText(App& app, const Item& it) {
 
 void drawMarker(App& app, const Item& it) {
     if (it.marker.empty() || !it.tl) return;
-    DWRITE_TEXT_METRICS m = {};
-    if (FAILED(it.tl->GetMetrics(&m))) return;
 
     if (it.marker == L"[]") {
         float s = 11.f;
         float x = it.x - 21.f;
-        float y = it.y + 7.5f;
+        float y = it.y + it.baseline - 9.f;
         D2D1_RECT_F box = rect(x, y, x + s, y + s);
         app.rt->DrawRoundedRectangle(D2D1_ROUNDED_RECT{box, 2.5f, 2.5f}, app.brMuted.get(), 1.2f);
         if (app.hasTab()) {
@@ -50,7 +48,8 @@ void drawMarker(App& app, const Item& it) {
         return;
     }
 
-    D2D1_RECT_F rc = rect(it.x - 26.f, it.y, it.x - 7.f, it.y + m.height);
+    D2D1_RECT_F rc = rect(it.x - 26.f, it.y + it.baseline - 20.f, it.x - 7.f,
+                          it.y + it.baseline + 6.f);
     IDWriteTextFormat* fmt = app.fmtMarkerRight.get();
     app.rt->DrawText(it.marker.c_str(), (UINT32)it.marker.size(), fmt, rc, app.brMuted.get(),
                      D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -163,6 +162,8 @@ bool initGraphics(App& app) {
     }
     app.fmtTab = makeFormat(app, L"Segoe UI", 13.f, DWRITE_FONT_WEIGHT_NORMAL, 1.35f);
     app.fmtTabActive = makeFormat(app, L"Segoe UI", 13.f, DWRITE_FONT_WEIGHT_SEMI_BOLD, 1.35f);
+    for (IDWriteTextFormat* f : {app.fmtTab.get(), app.fmtTabActive.get()})
+        if (f) f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     app.fmtStatus = makeFormat(app, L"Segoe UI", 12.5f, DWRITE_FONT_WEIGHT_NORMAL, 1.4f);
     if (app.fmtStatus) app.fmtStatus->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     app.fmtSource = makeFormat(app, L"Consolas", 14.f, DWRITE_FONT_WEIGHT_NORMAL, 1.43f);
