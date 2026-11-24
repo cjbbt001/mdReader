@@ -32,8 +32,8 @@ void drawMarker(App& app, const Item& it) {
 
     if (it.marker == L"[]") {
         float s = 11.f;
-        float x = it.x - 19.f;
-        float y = it.y + 5.f;
+        float x = it.x - 21.f;
+        float y = it.y + 7.5f;
         D2D1_RECT_F box = rect(x, y, x + s, y + s);
         app.rt->DrawRoundedRectangle(D2D1_ROUNDED_RECT{box, 2.5f, 2.5f}, app.brMuted.get(), 1.2f);
         if (app.hasTab()) {
@@ -50,8 +50,8 @@ void drawMarker(App& app, const Item& it) {
         return;
     }
 
-    D2D1_RECT_F rc = rect(it.x - 30.f, it.y - 1.f, it.x - 4.f, it.y + m.height);
-    IDWriteTextFormat* fmt = it.markerRight ? app.fmtMarkerRight.get() : app.fmtMarker.get();
+    D2D1_RECT_F rc = rect(it.x - 26.f, it.y, it.x - 7.f, it.y + m.height);
+    IDWriteTextFormat* fmt = app.fmtMarkerRight.get();
     app.rt->DrawText(it.marker.c_str(), (UINT32)it.marker.size(), fmt, rc, app.brMuted.get(),
                      D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
@@ -158,6 +158,7 @@ bool initGraphics(App& app) {
     app.fmtBtn = makeFormat(app, L"Segoe UI", 13.5f, DWRITE_FONT_WEIGHT_NORMAL, 1.4f);
     if (app.fmtBtn) {
         app.fmtBtn->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        app.fmtBtn->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         app.fmtBtn->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
     app.fmtTab = makeFormat(app, L"Segoe UI", 13.f, DWRITE_FONT_WEIGHT_NORMAL, 1.35f);
@@ -172,20 +173,30 @@ bool initGraphics(App& app) {
     app.fmtIcon = makeFormat(app, L"Segoe UI", 12.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, 1.2f);
     if (app.fmtIcon) {
         app.fmtIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        app.fmtIcon->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         app.fmtIcon->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
     app.fmtIconBold = makeFormat(app, L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_BOLD, 1.2f);
     if (app.fmtIconBold) {
         app.fmtIconBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        app.fmtIconBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         app.fmtIconBold->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+    app.fmtIconMono = makeFormat(app, L"Consolas", 11.5f, DWRITE_FONT_WEIGHT_NORMAL, 1.2f);
+    if (app.fmtIconMono) {
+        app.fmtIconMono->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        app.fmtIconMono->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        app.fmtIconMono->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
     {
         ComPtr<IDWriteTextFormat> f;
-        if (SUCCEEDED(app.dwrite->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+        if (SUCCEEDED(app.dwrite->CreateTextFormat(L"Times New Roman", nullptr,
+                                                   DWRITE_FONT_WEIGHT_NORMAL,
                                                    DWRITE_FONT_STYLE_ITALIC,
-                                                   DWRITE_FONT_STRETCH_NORMAL, 15.f, L"",
+                                                   DWRITE_FONT_STRETCH_NORMAL, 16.f, L"",
                                                    f.put()))) {
             f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             f->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 18.f, 14.f);
             app.fmtIconItalic = std::move(f);

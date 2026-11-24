@@ -22,7 +22,7 @@ struct App {
 
     ComPtr<IDWriteTextFormat> fmtBody, fmtQuote, fmtCode, fmtTable, fmtTableHead,
         fmtMarker, fmtMarkerRight, fmtToc, fmtBtn, fmtTab, fmtTabActive, fmtSource,
-        fmtStatus, fmtIcon, fmtIconBold, fmtIconItalic, fmtHead[6];
+        fmtStatus, fmtIcon, fmtIconBold, fmtIconItalic, fmtIconMono, fmtHead[6];
 
     float codeSpanSize = 14.f;
 

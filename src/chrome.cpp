@@ -4,24 +4,27 @@
 #include <cmath>
 
 const ToolButton kToolButtons[] = {
-    {ChromeAction::Open, L"打开 (Ctrl+O)", false},
-    {ChromeAction::Save, L"保存 (Ctrl+S)", false},
-    {ChromeAction::Undo, L"撤销 (Ctrl+Z)", true},
-    {ChromeAction::Redo, L"重做 (Ctrl+Y)", true},
-    {ChromeAction::ToggleMode, L"源码/预览 (Ctrl+E)", false},
-    {ChromeAction::Outline, L"大纲 (Ctrl+J)", false},
-    {ChromeAction::Find, L"查找 (Ctrl+F)", false},
-    {ChromeAction::H1, L"一级标题", true},
-    {ChromeAction::H2, L"二级标题", true},
-    {ChromeAction::H3, L"三级标题", true},
-    {ChromeAction::Bold, L"加粗 (Ctrl+B)", true},
-    {ChromeAction::Italic, L"斜体 (Ctrl+I)", true},
-    {ChromeAction::Strike, L"删除线", true},
-    {ChromeAction::List, L"列表", true},
-    {ChromeAction::Quote, L"引用", true},
-    {ChromeAction::Code, L"行内代码", true},
-    {ChromeAction::Link, L"链接 (Ctrl+K)", true},
-    {ChromeAction::Image, L"图片", true},
+    // left: document + view
+    {ChromeAction::Open, L"打开 (Ctrl+O)", false, ToolGroup::Left},
+    {ChromeAction::Save, L"保存 (Ctrl+S)", false, ToolGroup::Left},
+    {ChromeAction::ToggleMode, L"源码/预览 (Ctrl+E)", false, ToolGroup::Left},
+
+    // middle: markdown commands
+    {ChromeAction::H1, L"一级标题", true, ToolGroup::Middle},
+    {ChromeAction::H2, L"二级标题", true, ToolGroup::Middle},
+    {ChromeAction::H3, L"三级标题", true, ToolGroup::Middle},
+    {ChromeAction::Bold, L"加粗 (Ctrl+B)", true, ToolGroup::Middle},
+    {ChromeAction::Italic, L"斜体 (Ctrl+I)", true, ToolGroup::Middle},
+    {ChromeAction::Strike, L"删除线", true, ToolGroup::Middle},
+    {ChromeAction::List, L"列表", true, ToolGroup::Middle},
+    {ChromeAction::Quote, L"引用", true, ToolGroup::Middle},
+    {ChromeAction::Code, L"行内代码", true, ToolGroup::Middle},
+    {ChromeAction::Link, L"链接 (Ctrl+K)", true, ToolGroup::Middle},
+    {ChromeAction::Image, L"图片", true, ToolGroup::Middle},
+
+    // right: panel + search
+    {ChromeAction::Find, L"查找 (Ctrl+F)", false, ToolGroup::Right},
+    {ChromeAction::Outline, L"大纲 (Ctrl+J)", false, ToolGroup::Right},
 };
 const int kToolButtonCount = (int)(sizeof(kToolButtons) / sizeof(kToolButtons[0]));
 
@@ -33,11 +36,6 @@ const float kTabMinW = 96.f;
 const float kBtn = 30.f;
 const float kBtnGap = 2.f;
 const float kGroupGap = 12.f;
-
-bool needsTabSeparator(int index) {
-    ChromeAction a = kToolButtons[index].action;
-    return a == ChromeAction::Undo || a == ChromeAction::Outline;
-}
 
 float tabWidth(App& app, int i) {
     const Tab& t = app.tabs[(size_t)i];
@@ -110,7 +108,7 @@ void drawIcon(App& app, ChromeAction a, D2D1_RECT_F r, ID2D1Brush* fg) {
     case ChromeAction::ToggleMode: {
         bool source = app.hasTab() && app.tab().mode == Mode::Source;
         if (source) {
-            text(L"</>", app.fmtIcon.get());
+            text(L"</>", app.fmtIconMono.get());
         } else {
             // eye
             app.rt->DrawEllipse(D2D1_ELLIPSE{D2D1_POINT_2F{cx, cy}, 8.f, 5.f}, fg, 1.3f);
@@ -119,11 +117,15 @@ void drawIcon(App& app, ChromeAction a, D2D1_RECT_F r, ID2D1Brush* fg) {
         break;
     }
     case ChromeAction::Outline:
-        line(cx - 7.f, cy - 6.f, cx - 7.f, cy + 6.f, 1.6f);
-        line(cx - 3.f, cy - 5.f, cx + 7.f, cy - 5.f);
-        line(cx - 3.f, cy - 1.f, cx + 4.f, cy - 1.f);
-        line(cx - 3.f, cy + 3.f, cx + 5.f, cy + 3.f);
-        line(cx - 3.f, cy + 7.f, cx + 2.f, cy + 7.f);
+        // side panel with a content column
+        app.rt->DrawRoundedRectangle(
+            D2D1_ROUNDED_RECT{rect(cx - 8.f, cy - 6.5f, cx + 8.f, cy + 6.5f), 2.5f, 2.5f}, fg, 1.3f);
+        line(cx + 2.f, cy - 6.f, cx + 2.f, cy + 6.f, 1.1f);
+        line(cx + 4.f, cy - 3.f, cx + 6.5f, cy - 3.f, 1.1f);
+        line(cx + 4.f, cy, cx + 6.5f, cy, 1.1f);
+        line(cx + 4.f, cy + 3.f, cx + 6.5f, cy + 3.f, 1.1f);
+        line(cx - 6.f, cy - 3.f, cx - 1.f, cy - 3.f, 1.1f);
+        line(cx - 6.f, cy, cx - 1.f, cy, 1.1f);
         break;
     case ChromeAction::Find:
         app.rt->DrawEllipse(D2D1_ELLIPSE{D2D1_POINT_2F{cx - 1.5f, cy - 1.5f}, 5.5f, 5.5f}, fg, 1.4f);
@@ -136,7 +138,7 @@ void drawIcon(App& app, ChromeAction a, D2D1_RECT_F r, ID2D1Brush* fg) {
     case ChromeAction::Italic: text(L"I", app.fmtIconItalic.get()); break;
     case ChromeAction::Strike:
         text(L"S", app.fmtIcon.get());
-        line(cx - 5.f, cy, cx + 5.f, cy, 1.5f);
+        line(cx - 4.5f, cy + 0.5f, cx + 4.5f, cy + 0.5f, 1.4f);
         break;
     case ChromeAction::List:
         for (int i = 0; i < 3; ++i) {
@@ -150,7 +152,7 @@ void drawIcon(App& app, ChromeAction a, D2D1_RECT_F r, ID2D1Brush* fg) {
         line(cx - 2.f, cy - 4.f, cx + 7.f, cy - 4.f);
         line(cx - 2.f, cy + 2.f, cx + 4.f, cy + 2.f);
         break;
-    case ChromeAction::Code: text(L"{ }", app.fmtIcon.get()); break;
+    case ChromeAction::Code: text(L"{ }", app.fmtIconMono.get()); break;
     case ChromeAction::Link:
         app.rt->DrawRoundedRectangle(
             D2D1_ROUNDED_RECT{rect(cx - 7.f, cy - 5.f, cx + 1.f, cy + 1.f), 3.f, 3.f}, fg, 1.3f);
@@ -171,6 +173,43 @@ void drawIcon(App& app, ChromeAction a, D2D1_RECT_F r, ID2D1Brush* fg) {
 }
 
 }  // namespace
+
+void toolButtonRects(const App& app, D2D1_RECT_F* out) {
+    float w[3] = {0.f, 0.f, 0.f};
+    for (int i = 0; i < kToolButtonCount; ++i) w[(int)kToolButtons[i].group] += kBtn + kBtnGap;
+    for (auto& v : w) v -= kBtnGap;
+
+    float leftX = 10.f;
+    float rightX = app.vw - 10.f - w[2];
+    float midX = (app.vw - w[1]) * 0.5f;
+    if (midX < leftX + w[0] + 18.f) midX = leftX + w[0] + 18.f;
+    if (midX + w[1] > rightX - 18.f) midX = rightX - 18.f - w[1];
+
+    float cursor[3] = {leftX, midX, rightX};
+    float top = app.tabStripH + (app.toolbarH - kBtn) * 0.5f;
+    for (int i = 0; i < kToolButtonCount; ++i) {
+        int g = (int)kToolButtons[i].group;
+        out[i] = rect(cursor[g], top, cursor[g] + kBtn, top + kBtn);
+        cursor[g] += kBtn + kBtnGap;
+    }
+}
+
+int toolButtonIndexAt(const App& app, float x, float y) {
+    if (y < app.tabStripH || y > app.contentTop()) return -1;
+    D2D1_RECT_F r[kToolButtonCount];
+    toolButtonRects(app, r);
+    for (int i = 0; i < kToolButtonCount; ++i)
+        if (x >= r[i].left - 1.f && x <= r[i].right + 1.f) return i;
+    return -1;
+}
+
+D2D1_RECT_F toolButtonRect(const App& app, int index) {
+    D2D1_RECT_F r[kToolButtonCount];
+    toolButtonRects(app, r);
+    if (index < 0 || index >= kToolButtonCount) return rect(0, 0, 0, 0);
+    return r[index];
+}
+
 
 D2D1_RECT_F tabRect(const App& app, int index) {
     float x = 8.f;
@@ -193,28 +232,6 @@ D2D1_RECT_F newTabRect(const App& app) {
 D2D1_RECT_F closeTabRect(const App& app, int index) {
     D2D1_RECT_F t = tabRect(app, index);
     return rect(t.right - 22.f, t.top + 7.f, t.right - 8.f, t.bottom - 7.f);
-}
-
-int toolButtonIndexAt(const App& app, float x, float y) {
-    if (y < app.tabStripH || y > app.contentTop()) return -1;
-    float bx = 12.f;
-    for (int i = 0; i < kToolButtonCount; ++i) {
-        if (needsTabSeparator(i)) bx += kGroupGap;
-        D2D1_RECT_F r = rect(bx, app.tabStripH + 3.f, bx + kBtn, app.contentTop() - 3.f);
-        if (x >= r.left && x <= r.right) return i;
-        bx += kBtn + kBtnGap;
-    }
-    return -1;
-}
-
-D2D1_RECT_F toolButtonRect(const App& app, int index) {
-    float bx = 12.f;
-    for (int i = 0; i < index; ++i) {
-        if (needsTabSeparator(i)) bx += kGroupGap;
-        bx += kBtn + kBtnGap;
-    }
-    if (needsTabSeparator(index)) bx += kGroupGap;
-    return rect(bx, app.tabStripH + 3.f, bx + kBtn, app.contentTop() - 3.f);
 }
 
 D2D1_RECT_F findBarRect(const App& app) {
@@ -272,30 +289,31 @@ void drawToolbar(App& app) {
                           app.brRule.get());
 
     bool editing = app.hasTab() && app.tab().mode == Mode::Source;
+    D2D1_RECT_F r[kToolButtonCount];
+    toolButtonRects(app, r);
+
     for (int i = 0; i < kToolButtonCount; ++i) {
-        D2D1_RECT_F r = toolButtonRect(app, i);
-        if (needsTabSeparator(i)) {
-            float sx = r.left - kGroupGap * 0.5f - 1.f;
-            app.rt->FillRectangle(rect(sx, r.top + 6.f, sx + 1.f, r.bottom - 6.f), app.brRule.get());
-        }
         bool disabled = kToolButtons[i].needsEditor && !editing;
         bool active = false;
-        if (kToolButtons[i].action == ChromeAction::Outline) active = app.showOutline;
-        if (kToolButtons[i].action == ChromeAction::ToggleMode) active = editing;
-        if (kToolButtons[i].action == ChromeAction::Find) active = app.findOpen;
+        switch (kToolButtons[i].action) {
+        case ChromeAction::Outline: active = app.showOutline; break;
+        case ChromeAction::ToggleMode: active = editing; break;
+        case ChromeAction::Find: active = app.findOpen; break;
+        default: break;
+        }
 
-        if (app.hoverBtn == i && !disabled) {
+        if ((app.hoverBtn == i || active) && !disabled) {
             ComPtr<ID2D1SolidColorBrush> hb;
-            app.rt->CreateSolidColorBrush(app.th.tableHead, hb.put());
-            app.rt->FillRoundedRectangle(D2D1_ROUNDED_RECT{rect(r.left, r.top + 1.f, r.right, r.bottom - 1.f), 5.f, 5.f}, hb.get());
+            app.rt->CreateSolidColorBrush(active ? app.th.tableHead : app.th.panel, hb.put());
+            app.rt->FillRoundedRectangle(
+                D2D1_ROUNDED_RECT{rect(r[i].left, r[i].top + 1.f, r[i].right, r[i].bottom - 1.f), 5.f,
+                                  5.f},
+                hb.get());
         }
-        if (active) {
-            ComPtr<ID2D1SolidColorBrush> ab;
-            app.rt->CreateSolidColorBrush(app.th.tableHead, ab.put());
-            app.rt->FillRoundedRectangle(D2D1_ROUNDED_RECT{rect(r.left, r.top + 2.f, r.right, r.bottom - 2.f), 5.f, 5.f}, ab.get());
-        }
-        ID2D1Brush* fg = disabled ? app.brRule.get() : (active ? app.brAccent.get() : app.brText.get());
-        drawIcon(app, kToolButtons[i].action, rect(r.left + 4.f, r.top + 4.f, r.right - 4.f, r.bottom - 4.f), fg);
+        ID2D1Brush* fg =
+            disabled ? app.brRule.get() : (active ? app.brAccent.get() : app.brText.get());
+        drawIcon(app, kToolButtons[i].action,
+                 rect(r[i].left + 5.f, r[i].top + 5.f, r[i].right - 5.f, r[i].bottom - 5.f), fg);
     }
 }
 
