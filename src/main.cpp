@@ -134,7 +134,10 @@ void newTab(App& app, const std::wstring& path, const std::wstring& text) {
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
-void openPath(App& app, const std::wstring& path) {
+void openPath(App& app, const std::wstring& pathIn) {
+    wchar_t full[1024] = L"";
+    std::wstring path = pathIn;
+    if (GetFullPathNameW(pathIn.c_str(), 1024, full, nullptr)) path = full;
     for (int i = 0; i < (int)app.tabs.size(); ++i) {
         if (_wcsicmp(app.tabs[(size_t)i].path.c_str(), path.c_str()) == 0) {
             selectTab(app, i);
@@ -300,68 +303,176 @@ void edCopy(App& app, bool cut) {
 
 namespace {
 
-// Pastes a clipboard bitmap as attachment/<name>.png next to the document and
-// inserts the markdown link at the caret.
-void pasteClipboardImage(App& app) {
+bool isImageExt(const std::wstring& path) {
+    size_t dot = path.find_last_of(L'.');
+    if (dot == std::wstring::npos) return false;
+    std::wstring ext = path.substr(dot);
+    for (auto& c : ext) c = (wchar_t)towlower((wint_t)c);
+    static const wchar_t* kExts[] = {L".png", L".jpg", L".jpeg", L".gif", L".bmp", L".webp",
+                                     L".tif", L".tiff"};
+    for (const wchar_t* e : kExts)
+        if (ext == e) return true;
+    return false;
+}
+
+// attachment/ lives next to the document; both paths are returned.
+bool attachmentDir(App& app, std::wstring* dir, std::wstring* rel) {
     if (!app.hasTab() || app.tab().path.empty()) {
-        MessageBoxW(app.hwnd, L"先把文档保存到磁盘，图片会放到同级目录的 attachment 文件夹",
+        MessageBoxW(app.hwnd, L"\u5148\u628a\u6587\u6863\u4fdd\u5b58\u5230\u78c1\u76d8\uff0c\u56fe\u7247\u4f1a\u653e\u5230\u540c\u7ea7\u76ee\u5f55\u7684 attachment \u6587\u4ef6\u5939",
                     L"MD Reader", MB_ICONINFORMATION);
-        return;
+        return false;
     }
-    std::wstring path = app.tab().path;
-    size_t slash = path.find_last_of(L"\/");
-    std::wstring dir = (slash == std::wstring::npos) ? std::wstring() : path.substr(0, slash + 1);
-    std::wstring attach = dir + L"attachment";
-    CreateDirectoryW(attach.c_str(), nullptr);
+    const std::wstring& p = app.tab().path;
+    size_t slash = p.find_last_of(L"\\/");
+    std::wstring base = (slash == std::wstring::npos) ? std::wstring() : p.substr(0, slash + 1);
+    *dir = base + L"attachment\\";
+    *rel = L"attachment/";
+    CreateDirectoryW((base + L"attachment").c_str(), nullptr);
+    return true;
+}
+
+std::wstring uniqueAttachName(const std::wstring& dir, const std::wstring& wanted) {
+    std::wstring stem = wanted, ext;
+    size_t dot = wanted.find_last_of(L'.');
+    if (dot != std::wstring::npos) {
+        stem = wanted.substr(0, dot);
+        ext = wanted.substr(dot);
+    }
+    std::wstring candidate = wanted;
+    for (int n = 1; n < 1000; ++n) {
+        if (GetFileAttributesW((dir + candidate).c_str()) == INVALID_FILE_ATTRIBUTES) return candidate;
+        candidate = stem + L"-" + std::to_wstring(n) + ext;
+    }
+    return wanted;
+}
+
+void insertImageRef(App& app, const std::wstring& relLink) {
+    Editor& ed = app.tab().ed;
+    ed.snapshot(GetTickCount64());
+    std::wstring line = std::wstring(L"![") + L"](" + relLink + L")";
+    if (ed.caret.col > 0) line = std::wstring(L"\n") + line;
+    ed.insert(line + std::wstring(L"\n"));
+    app.tab().dirty = true;
+    edEnsureCaretVisible(app);
+    InvalidateRect(app.hwnd, nullptr, FALSE);
+}
+
+// Files copied in Explorer: keep the original bytes and link them.
+bool pasteImageFiles(App& app) {
+    if (!OpenClipboard(app.hwnd)) return false;
+    HANDLE h = GetClipboardData(CF_HDROP);
+    std::vector<std::wstring> files;
+    if (h) {
+        HDROP hd = (HDROP)h;
+        UINT n = DragQueryFileW(hd, 0xFFFFFFFF, nullptr, 0);
+        for (UINT i = 0; i < n; ++i) {
+            wchar_t buf[1024] = L"";
+            if (DragQueryFileW(hd, i, buf, 1024) && isImageExt(buf)) files.push_back(buf);
+        }
+    }
+    CloseClipboard();
+    if (files.empty()) return false;
+
+    std::wstring dir, rel;
+    if (!attachmentDir(app, &dir, &rel)) return true;
+
+    for (const auto& f : files) {
+        std::wstring name = uniqueAttachName(dir, fileNameOf(f));
+        if (!CopyFileW(f.c_str(), (dir + name).c_str(), TRUE)) continue;
+        insertImageRef(app, rel + name);
+    }
+    return true;
+}
+
+// "PNG" clipboard format: raw PNG bytes, written straight through.
+bool pastePngStream(App& app) {
+    UINT fmt = RegisterClipboardFormatW(L"PNG");
+    if (!fmt || !IsClipboardFormatAvailable(fmt)) return false;
+    if (!OpenClipboard(app.hwnd)) return false;
+    HANDLE h = GetClipboardData(fmt);
+    std::vector<BYTE> bytes;
+    if (h) {
+        SIZE_T size = GlobalSize(h);
+        const BYTE* p = (const BYTE*)GlobalLock(h);
+        if (p && size > 8 && p[0] == 0x89 && p[1] == 0x50 && p[2] == 0x4E && p[3] == 0x47)
+            bytes.assign(p, p + size);
+        if (p) GlobalUnlock(h);
+    }
+    CloseClipboard();
+    if (bytes.empty()) return false;
+
+    std::wstring dir, rel;
+    if (!attachmentDir(app, &dir, &rel)) return true;
 
     SYSTEMTIME st;
     GetLocalTime(&st);
-    wchar_t name[128];
+    wchar_t raw[128];
+    swprintf(raw, 128, L"image-%02d%02d%02d-%02d%02d%02d.png", st.wYear % 100, st.wMonth, st.wDay,
+             st.wHour, st.wMinute, st.wSecond);
+    std::wstring name = uniqueAttachName(dir, raw);
+    std::ofstream f((dir + name).c_str(), std::ios::binary | std::ios::trunc);
+    if (!f) return true;
+    f.write((const char*)bytes.data(), (std::streamsize)bytes.size());
+    f.close();
+    insertImageRef(app, rel + name);
+    return true;
+}
+
+// Raw bitmap on the clipboard: encode to PNG through WIC.
+bool pasteDib(App& app) {
+    std::wstring dir, rel;
+    if (!attachmentDir(app, &dir, &rel)) return true;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t raw[128];
     for (int n = 0; n < 100; ++n) {
         if (n == 0)
-            swprintf(name, 128, L"attachment/image-%02d%02d%02d-%02d%02d%02d.png", st.wYear % 100,
-                     st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+            swprintf(raw, 128, L"image-%02d%02d%02d-%02d%02d%02d.png", st.wYear % 100, st.wMonth,
+                     st.wDay, st.wHour, st.wMinute, st.wSecond);
         else
-            swprintf(name, 128, L"attachment/image-%02d%02d%02d-%02d%02d%02d-%d.png",
-                     st.wYear % 100, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, n);
-        std::wstring full = dir + name;
-        if (GetFileAttributesW(full.c_str()) != INVALID_FILE_ATTRIBUTES) continue;
-        if (!saveClipboardImage(app.hwnd, full)) return;
-        std::wstring insert = std::wstring(L"![](") + name + L")";
-        Editor& ed = app.tab().ed;
-        // On its own line the image becomes a block-level element.
-        if (ed.caret.col > 0) insert = std::wstring(L"\n") + insert;
-        ed.snapshot(GetTickCount64());
-        ed.insert(insert + std::wstring(L"\n"));
-        app.tab().dirty = true;
-        edEnsureCaretVisible(app);
-        InvalidateRect(app.hwnd, nullptr, FALSE);
-        return;
+            swprintf(raw, 128, L"image-%02d%02d%02d-%02d%02d%02d-%d.png", st.wYear % 100, st.wMonth,
+                     st.wDay, st.wHour, st.wMinute, st.wSecond, n);
+        std::wstring name = uniqueAttachName(dir, raw);
+        if (!saveClipboardImage(app.hwnd, dir + name)) return true;
+        insertImageRef(app, rel + name);
+        return true;
     }
+    return true;
 }
 
 }  // namespace
 
 void edPaste(App& app) {
     if (!app.hasTab() || app.tab().mode != Mode::Source) return;
-    if (!OpenClipboard(app.hwnd)) return;
 
-    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) && IsClipboardFormatAvailable(CF_DIB)) {
+    bool hasText = IsClipboardFormatAvailable(CF_UNICODETEXT) != 0;
+    bool hasFiles = IsClipboardFormatAvailable(CF_HDROP) != 0;
+    bool hasDib = IsClipboardFormatAvailable(CF_DIB) != 0;
+    UINT pngFmt = RegisterClipboardFormatW(L"PNG");
+    bool hasPng = pngFmt && IsClipboardFormatAvailable(pngFmt);
+
+    if (hasFiles && pasteImageFiles(app)) return;
+    if (hasText) {
+        if (!OpenClipboard(app.hwnd)) return;
+        HANDLE h = GetClipboardData(CF_UNICODETEXT);
+        if (h) {
+            const wchar_t* p = (const wchar_t*)GlobalLock(h);
+            if (p) {
+                std::wstring s = p;
+                for (auto& c : s)
+                    if (c == L'\r') c = L'\n';
+                GlobalUnlock(h);
+                CloseClipboard();
+                edInsertText(app, s);
+                return;
+            }
+        }
         CloseClipboard();
-        pasteClipboardImage(app);
         return;
     }
-    HANDLE h = GetClipboardData(CF_UNICODETEXT);
-    if (h) {
-        const wchar_t* p = (const wchar_t*)GlobalLock(h);
-        if (p) {
-            std::wstring s = p;
-            for (auto& c : s) if (c == L'\r') c = L'\n';
-            GlobalUnlock(h);
-            edInsertText(app, s);
-        }
-    }
-    CloseClipboard();
+    if (hasPng && pastePngStream(app)) return;
+    if (hasDib && pasteDib(app)) return;
 }
 
 void edUndo(App& app) {
