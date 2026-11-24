@@ -183,6 +183,18 @@ bool initGraphics(App& app) {
         app.fmtIconBold->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         app.fmtIconBold->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
+    for (const wchar_t* family : {L"Segoe Fluent Icons", L"Segoe MDL2 Assets"}) {
+        ComPtr<IDWriteTextFormat> f;
+        if (SUCCEEDED(app.dwrite->CreateTextFormat(family, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                                                   DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                                   10.f, L"", f.put()))) {
+            f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            app.fmtCaption = std::move(f);
+            break;
+        }
+    }
     app.fmtIconMono = makeFormat(app, L"Consolas", 11.5f, DWRITE_FONT_WEIGHT_NORMAL, 1.2f);
     if (app.fmtIconMono) {
         app.fmtIconMono->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -426,12 +438,6 @@ void drawOutline(App& app) {
 
 }  // namespace
 
-D2D1_RECT_F outlineButtonRect(const App& app) {
-    float w = 54.f, h = 21.f;
-    float right = app.vw - 12.f;
-    float top = app.tabStripH + (app.toolbarH - h) * 0.5f;
-    return rect(right - w, top, right, top + h);
-}
 
 void outlineEntryRect(const App& app, int index, float* top, float* bottom) {
     float y = app.contentTop() + kTocTopPad + (float)index * kTocItemH - app.outlineScroll;

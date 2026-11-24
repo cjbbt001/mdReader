@@ -22,7 +22,7 @@ struct App {
 
     ComPtr<IDWriteTextFormat> fmtBody, fmtQuote, fmtCode, fmtTable, fmtTableHead,
         fmtMarker, fmtMarkerRight, fmtToc, fmtBtn, fmtTab, fmtTabActive, fmtSource,
-        fmtStatus, fmtIcon, fmtIconBold, fmtIconItalic, fmtIconMono, fmtHead[6];
+        fmtStatus, fmtIcon, fmtIconBold, fmtIconItalic, fmtIconMono, fmtCaption, fmtHead[6];
 
     float codeSpanSize = 14.f;
 
@@ -60,6 +60,8 @@ struct App {
     float dragGrab = 0.f;
     bool selecting = false;
     bool caretOn = true;
+    int ncHover = 0;   // 1 minimise, 2 maximise, 3 close
+    bool maximized = false;
 
     float vw = 0.f, vh = 0.f;
     float dpi = 96.f;
@@ -96,7 +98,6 @@ int blockAtScroll(const App& app);
 struct ScrollGeom { float trackX, trackW, thumbY, thumbH, trackY, trackH; bool visible; };
 ScrollGeom scrollGeom(const App& app);
 void scrollToThumb(App& app, float thumbY);
-D2D1_RECT_F outlineButtonRect(const App& app);
 int outlineHit(const App& app, float x, float y);
 void outlineEntryRect(const App& app, int index, float* top, float* bottom);
 
@@ -114,7 +115,6 @@ void edEnsureCaretVisible(App& app);
 void edMoveCaretLine(App& app, int delta);
 void applyFormat(App& app, int action);
 void edSelectAll(App& app);
-void edDeleteWordLeft(App& app);
 
 // ---- find ----
 void findOpenBar(App& app);

@@ -78,7 +78,4 @@ struct Tab {
 
     std::wstring path, name;
     bool dirty = false;
-    bool previewStale = true;   // source changed since the last parse
-
-    bool named() const { return !path.empty(); }
 };

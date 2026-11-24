@@ -57,3 +57,8 @@ D2D1_RECT_F tabRect(const App& app, int index);
 D2D1_RECT_F newTabRect(const App& app);
 D2D1_RECT_F closeTabRect(const App& app, int index);
 D2D1_RECT_F findBarRect(const App& app);
+D2D1_RECT_F captionIconRect(const App& app);
+D2D1_RECT_F captionMinRect(const App& app);
+D2D1_RECT_F captionMaxRect(const App& app);
+D2D1_RECT_F captionCloseRect(const App& app);
+bool captionIsEmpty(const App& app, float x, float y);

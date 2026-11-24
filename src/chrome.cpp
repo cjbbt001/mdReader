@@ -228,7 +228,7 @@ D2D1_RECT_F toolButtonRect(const App& app, int index) {
 
 
 D2D1_RECT_F tabRect(const App& app, int index) {
-    float x = 8.f;
+    float x = 38.f;
     for (int i = 0; i < index && i < (int)app.tabs.size(); ++i) {
         App& a = const_cast<App&>(app);
         x += tabWidth(a, i) + 2.f;
@@ -239,7 +239,7 @@ D2D1_RECT_F tabRect(const App& app, int index) {
 }
 
 D2D1_RECT_F newTabRect(const App& app) {
-    float x = 8.f;
+    float x = 38.f;
     App& a = const_cast<App&>(app);
     for (int i = 0; i < (int)app.tabs.size(); ++i) x += tabWidth(a, i) + 2.f;
     return rect(x + 2.f, 4.f, x + 30.f, app.tabStripH - 2.f);
@@ -250,6 +250,37 @@ D2D1_RECT_F closeTabRect(const App& app, int index) {
     return rect(t.right - 22.f, t.top + 7.f, t.right - 8.f, t.bottom - 7.f);
 }
 
+D2D1_RECT_F captionIconRect(const App& app) {
+    float s = 16.f;
+    float top = (app.tabStripH - s) * 0.5f;
+    return rect(11.f, top, 11.f + s, top + s);
+}
+
+namespace {
+const float kCapBtnW = 46.f;
+D2D1_RECT_F capButton(const App& app, int index) {
+    float right = app.vw - (float)(2 - index) * kCapBtnW;
+    return rect(right - kCapBtnW, 0.f, right, app.tabStripH);
+}
+}  // namespace
+
+D2D1_RECT_F captionMinRect(const App& app) { return capButton(app, 0); }
+D2D1_RECT_F captionMaxRect(const App& app) { return capButton(app, 1); }
+D2D1_RECT_F captionCloseRect(const App& app) { return capButton(app, 2); }
+
+bool captionIsEmpty(const App& app, float x, float y) {
+    if (y >= app.tabStripH) return false;
+    if (x < 34.f) return false;  // icon area
+    if (x >= captionMinRect(app).left) return false;
+    for (int i = 0; i < (int)app.tabs.size(); ++i) {
+        D2D1_RECT_F t = tabRect(app, i);
+        if (x >= t.left - 2.f && x <= t.right + 2.f) return false;
+    }
+    D2D1_RECT_F plus = newTabRect(app);
+    if (x >= plus.left - 4.f && x <= plus.right + 8.f) return false;
+    return true;
+}
+
 D2D1_RECT_F findBarRect(const App& app) {
     return rect(80.f, app.tabStripH + 4.f, app.vw - 130.f, app.contentTop() - 4.f);
 }
@@ -258,23 +289,42 @@ namespace {
 
 void drawTabStrip(App& app) {
     app.rt->FillRectangle(rect(0.f, 0.f, app.vw, app.tabStripH), app.brPanel.get());
+
+    {
+        // Folder mark drawn with the theme's text colour so it sits on the
+        // caption background instead of carrying a white plate.
+        D2D1_RECT_F ir = captionIconRect(app);
+        float w = ir.right - ir.left, h = ir.bottom - ir.top;
+        float L = ir.left + w * 0.08f, R = ir.right - w * 0.06f;
+        float T = ir.top + h * 0.24f, TB = ir.top + h * 0.38f, B = ir.bottom - h * 0.16f;
+        float TE = ir.left + w * 0.44f, SL = w * 0.12f;
+        ID2D1Brush* fg = app.brText.get();
+        float lw = 1.25f;
+        app.rt->DrawLine(D2D1_POINT_2F{L, T}, D2D1_POINT_2F{TE, T}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{TE, T}, D2D1_POINT_2F{TE + SL, TB}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{TE + SL, TB}, D2D1_POINT_2F{R, TB}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{R, TB}, D2D1_POINT_2F{R, B}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{R, B}, D2D1_POINT_2F{L, B}, fg, lw);
+        app.rt->DrawLine(D2D1_POINT_2F{L, B}, D2D1_POINT_2F{L, T}, fg, lw);
+    }
+
     for (int i = 0; i < (int)app.tabs.size(); ++i) {
         D2D1_RECT_F r = tabRect(app, i);
         bool sel = i == app.active;
         D2D1_COLOR_F bg = sel ? app.th.bg : app.th.panel;
         ComPtr<ID2D1SolidColorBrush> b;
         app.rt->CreateSolidColorBrush(bg, b.put());
-        D2D1_ROUNDED_RECT rr = {rect(r.left, r.top + 2.f, r.right, r.bottom), 5.f, 5.f};
+        D2D1_ROUNDED_RECT rr = {rect(r.left, r.top + 2.f, r.right, r.bottom - 2.f), 5.f, 5.f};
         app.rt->FillRoundedRectangle(rr, b.get());
 
-        std::wstring title = app.tabs[(size_t)i].name.empty() ? L"无标题" : app.tabs[(size_t)i].name;
+        std::wstring title = app.tabs[(size_t)i].name.empty() ? L"\u65e0\u6807\u9898"
+                                                             : app.tabs[(size_t)i].name;
         if (app.tabs[(size_t)i].dirty) title += L" *";
         app.rt->DrawText(title.c_str(), (UINT32)title.size(),
                          sel ? app.fmtTabActive.get() : app.fmtTab.get(),
                          rect(r.left + 10.f, r.top + 2.f, r.right - 24.f, r.bottom - 2.f),
                          sel ? app.brText.get() : app.brMuted.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 
-        // close cross
         D2D1_RECT_F c = closeTabRect(app, i);
         bool hot = app.hoverCloseTab == i;
         ID2D1Brush* cb = hot ? app.brText.get() : app.brMuted.get();
@@ -293,6 +343,30 @@ void drawTabStrip(App& app) {
     D2D1_RECT_F plus = newTabRect(app);
     app.rt->DrawText(L"+", 1, app.fmtIcon.get(), plus, app.brMuted.get(),
                      D2D1_DRAW_TEXT_OPTIONS_CLIP);
+
+    // ---- window buttons ----
+    D2D1_RECT_F btn[3] = {captionMinRect(app), captionMaxRect(app), captionCloseRect(app)};
+    const wchar_t* glyph[3] = {L"\uE921", app.maximized ? L"\uE923" : L"\uE922", L"\uE8BB"};
+    for (int i = 0; i < 3; ++i) {
+        bool hot = app.ncHover == i + 1;
+        if (hot) {
+            ComPtr<ID2D1SolidColorBrush> hb;
+            D2D1_COLOR_F col = (i == 2) ? rgb(0xC42B1C) : app.th.tableHead;
+            app.rt->CreateSolidColorBrush(col, hb.put());
+            app.rt->FillRectangle(btn[i], hb.get());
+        }
+        ID2D1Brush* fg = (hot && i == 2) ? nullptr : app.brText.get();
+        if (hot && i == 2) {
+            ComPtr<ID2D1SolidColorBrush> white;
+            app.rt->CreateSolidColorBrush(rgb(0xFFFFFF), white.put());
+            app.rt->DrawText(glyph[i], 1, app.fmtCaption.get(), btn[i], white.get(),
+                             D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        } else {
+            app.rt->DrawText(glyph[i], 1, app.fmtCaption.get(), btn[i], fg,
+                             D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+    }
+
     app.rt->FillRectangle(rect(0.f, app.tabStripH - 1.f, app.vw, app.tabStripH),
                           app.brRule.get());
 }
@@ -314,7 +388,6 @@ void drawToolbar(App& app) {
         switch (kToolButtons[i].action) {
         case ChromeAction::Outline: active = app.showOutline; break;
         case ChromeAction::ToggleMode: active = editing; break;
-        case ChromeAction::Find: active = app.findOpen; break;
         default: break;
         }
 

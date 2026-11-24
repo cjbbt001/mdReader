@@ -58,6 +58,19 @@ bool systemDark() {
     return v == 0;
 }
 
+// Windows 11 draws the rounded outline for us; without the caption we still
+// want the corners and the 1px border it paints around them.
+void applyWindowShape(HWND h) {
+    typedef HRESULT(WINAPI * Fn)(HWND, DWORD, LPCVOID, DWORD);
+    static HMODULE mod = LoadLibraryW(L"dwmapi.dll");
+    static Fn fn = mod ? (Fn)GetProcAddress(mod, "DwmSetWindowAttribute") : nullptr;
+    if (!fn) return;
+    const DWORD DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    const int DWMWCP_ROUND = 2;
+    int pref = DWMWCP_ROUND;
+    fn(h, DWMWA_WINDOW_CORNER_PREFERENCE, &pref, sizeof(pref));
+}
+
 void applyDarkTitleBar(HWND h, bool dark) {
     typedef HRESULT(WINAPI * Fn)(HWND, DWORD, LPCVOID, DWORD);
     static HMODULE mod = LoadLibraryW(L"dwmapi.dll");
@@ -104,14 +117,10 @@ std::wstring fileNameOf(const std::wstring& path) {
 }
 
 void setTitle(App& app) {
-    std::wstring title = L"MD Reader";
-    if (app.hasTab()) {
-        const Tab& t = app.tab();
-        title = (t.name.empty() ? L"无标题" : t.name);
-        if (t.dirty) title += L" *";
-        title += L" - MD Reader";
-    }
-    SetWindowTextW(app.hwnd, title.c_str());
+    // The caption is custom-drawn (tabs replace the title text); the window text
+    // only feeds the taskbar and Alt+Tab.
+    (void)app;
+    SetWindowTextW(app.hwnd, L"MD Reader");
 }
 
 }  // namespace
@@ -198,7 +207,6 @@ void syncEditorToPreview(App& app) {
     layoutReset(app);
     ensureLayoutForView(app);
     scrollTo(app, frac * std::max(0.f, t.lay.contentH - app.viewH()));
-    t.previewStale = false;
 }
 
 void switchMode(App& app, Mode mode) {
@@ -946,8 +954,67 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)app);
         break;
     }
+    case WM_NCCALCSIZE:
+        if (!wp) {
+            // Pre-layout pass: report the whole window as client area.
+            RECT wr = {};
+            GetWindowRect(h, &wr);
+            *(RECT*)lp = wr;
+            return 0;
+        }
+        if (wp) {
+            auto* p = (NCCALCSIZE_PARAMS*)lp;
+            if (IsZoomed(h)) {
+                // A maximised window is inflated by the resize border; keep the
+                // content inside the work area.
+                int bx = GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+                int by = GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+                p->rgrc[0].left += bx;
+                p->rgrc[0].right -= bx;
+                p->rgrc[0].top += by;
+                p->rgrc[0].bottom -= by;
+            }
+            return 0;  // client area covers the whole window
+        }
+        break;
+    case WM_NCHITTEST: {
+        if (!app) break;
+        POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ScreenToClient(h, &pt);
+        RECT rc = {};
+        GetClientRect(h, &rc);
+        int b = (int)(6.f * app->dpi / 96.f);
+        if (!IsZoomed(h)) {
+            bool left = pt.x < b, right = pt.x >= rc.right - b;
+            bool top = pt.y < b, bottom = pt.y >= rc.bottom - b;
+            if (top && left) return HTTOPLEFT;
+            if (top && right) return HTTOPRIGHT;
+            if (bottom && left) return HTBOTTOMLEFT;
+            if (bottom && right) return HTBOTTOMRIGHT;
+            if (left) return HTLEFT;
+            if (right) return HTRIGHT;
+            if (top) return HTTOP;
+            if (bottom) return HTBOTTOM;
+        }
+        float x = (float)pt.x * 96.f / app->dpi;
+        float y = (float)pt.y * 96.f / app->dpi;
+        auto inside = [&](D2D1_RECT_F r) {
+            return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+        };
+        // The three caption buttons are handled as client clicks: with a custom
+        // frame the system's HTMAXBUTTON path swallows the button-down message.
+        if (inside(captionMinRect(*app)) || inside(captionMaxRect(*app)) ||
+            inside(captionCloseRect(*app)))
+            return HTCLIENT;
+        if (captionIsEmpty(*app, x, y)) return HTCAPTION;
+        return HTCLIENT;
+    }
+    case WM_NCACTIVATE:
+        if (app) InvalidateRect(h, nullptr, FALSE);
+        break;
     case WM_SIZE:
         if (app) {
+            app->maximized = IsZoomed(h) != 0;
             app->dpi = (float)dpiOf(h);
             updateViewport(*app);
             if (app->rt) {
@@ -1027,6 +1094,15 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         if (app) {
             float x = dipX(*app, GET_X_LPARAM(lp));
             float y = dipY(*app, GET_Y_LPARAM(lp));
+            auto in = [&](D2D1_RECT_F r) {
+                return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+            };
+            if (in(captionCloseRect(*app))) { PostMessageW(h, WM_CLOSE, 0, 0); return 0; }
+            if (in(captionMaxRect(*app))) {
+                ShowWindow(h, IsZoomed(h) ? SW_RESTORE : SW_MAXIMIZE);
+                return 0;
+            }
+            if (in(captionMinRect(*app))) { ShowWindow(h, SW_MINIMIZE); return 0; }
             ChromeHit hit = chromeHitTest(*app, x, y);
             if (hit.action != ChromeAction::None) {
                 handleChrome(*app, hit.action, hit.index);
@@ -1076,6 +1152,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             if (app->selecting) {
                 edMouseDrag(*app, x, y);
                 return 0;
+            }
+            int nc = 0;
+            auto inBtn = [&](D2D1_RECT_F r) {
+                return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+            };
+            if (inBtn(captionMinRect(*app))) nc = 1;
+            else if (inBtn(captionMaxRect(*app))) nc = 2;
+            else if (inBtn(captionCloseRect(*app))) nc = 3;
+            if (nc != app->ncHover) {
+                app->ncHover = nc;
+                InvalidateRect(h, nullptr, FALSE);
             }
             int hover = toolButtonIndexAt(*app, x, y);
             int closeTab = -1;
@@ -1261,6 +1348,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     if (!hwnd) return 1;
 
     app.pendingFile = openArg;
+    applyWindowShape(hwnd);
     applyDarkTitleBar(hwnd, app.themeDark);
     ShowWindow(hwnd, nShow);
     UpdateWindow(hwnd);

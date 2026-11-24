@@ -1,28 +1,27 @@
 # MD Reader
 
-一个极简的 Markdown 阅读器。拖进来就能看，没有编辑框、没有设置面板、没有启动画面。
+一个极简的 Markdown 阅读器。拖进来就能看，没有启动画面，没有设置面板。
 
 ## 为什么做这个
 
 现有方案要么太慢，要么太重。Electron 系的编辑器打开一个 20 KB 的文档要等两秒，内存吃掉 300 MB；单纯想看一遍文档的人，不该为此付出代价。
 
-这个程序只做一件事：把 Markdown 排好版，显示出来。窗口 60 毫秒内可见，内容 100 毫秒到位，全部代码 1500 行。
+这个程序只做一件事：把 Markdown 排好版，显示出来。窗口 100 毫秒内出来，全部代码 4600 行。
 
 ## 支持的东西
 
 - CommonMark 的段落、标题、列表、引用、代码块
 - **粗体**、*斜体*、`行内代码`、~~删除线~~
-- [链接](https://example.com)（目前只高亮，还不能点）
+- [链接](https://example.com)（目前只着色，还不能点）
 - GFM 表格、任务列表
-- 大纲面板：按标题层级缩进，点击跳转
+- 代码块语法高亮、图片、大纲面板
 
 ### 还没做的
 
-1. 图片渲染（现在只显示 alt 文本）
-2. 代码块语法高亮
-3. 文件内查找
-4. 记住滚动位置
-5. 源码/编辑模式
+1. 链接点击跳转
+2. 记住每个文件的滚动位置
+3. 表格单元格里的行内样式
+4. 从网络加载图片
 
 > 增量布局：先排一屏多一点的量就立刻呈现，剩下的在空闲时继续排。
 > 这样即使打开一本 500 页的书，第一帧也不会等全文排完。
@@ -33,7 +32,8 @@ void layoutStep(App& app, float untilY, int budgetMs) {
     while (L.next < app.doc.blocks.size()) {
         Item it = layoutBlock(app, app.doc.blocks[L.next], L.contentH, cx, cw);
         L.items.push_back(std::move(it));
-        if (L.contentH >= untilY && elapsed() >= budgetMs) break;
+        if (L.contentH >= untilY) break;
+        if (elapsed() >= budgetMs) break;
     }
 }
 ```
@@ -42,8 +42,8 @@ void layoutStep(App& app, float untilY, int budgetMs) {
 
 | 项目 | 数值 | 说明 |
 | --- | --- | --- |
-| 二进制体积 | 1.1 MB | 静态链接，无运行库依赖 |
-| 窗口可见 | 47–78 ms | 内容稍后补上 |
+| 二进制体积 | 1.4 MB | 静态链接，无运行库依赖 |
+| 窗口可见 | 47–78 ms | 内容随后补上 |
 | 首帧内容 | ~100 ms | 解析 + 排版 + 绘制 |
 | 工作集 | 42 MB | 大头是 Direct2D/DirectWrite |
 | 依赖 | 系统 DLL | D2D、DWrite、WIC |
@@ -53,4 +53,4 @@ void layoutStep(App& app, float untilY, int budgetMs) {
 
 ---
 
-最后一段：滚动滚轮、翻页键、Home / End 都能用，滚动位置在窗口缩放后依然按内容锚定，不会因为换行变化而跳走。
+最后一段：滚动滚轮、翻页键、Home / End、空格都能用，`Ctrl+E` 切到源码就能改，`Ctrl+J` 打开大纲。
