@@ -14,7 +14,6 @@ struct ImgEntry {
     bool ready = false;
     bool failed = false;
     bool pending = false;
-    uint64_t lastUse = 0;
 };
 
 struct Decoded {
@@ -124,7 +123,6 @@ bool imageInfo(const std::wstring& path, UINT* w, UINT* h, int* state) {
 void requestImage(App& app, const std::wstring& path) {
     if (path.empty()) return;
     ImgEntry& e = cache()[path];
-    e.lastUse = GetTickCount64();
     if (e.ready || e.failed || e.pending) return;
     e.pending = true;
     g_notify = app.hwnd;
@@ -169,9 +167,10 @@ void imagePoll(App& app) {
         changed = true;
         delete d;
     }
-    if (changed && app.hasTab()) {
-        // Image heights may have changed: lay the rest out again.
-        relayoutFrom(app, 0);
+    if (changed) {
+        for (size_t i = 0; i < app.tabs.size(); ++i)
+            if ((int)i != app.active) app.tabs[i].layoutWidth = -1.f;
+        if (app.hasTab() && app.tab().mode == Mode::Preview) reflowAnchor(app);
     }
 }
 

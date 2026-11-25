@@ -4,6 +4,7 @@
 enum class ChromeAction {
     None = 0,
     NewTab,
+    TabMenu,
     CloseTab,
     SelectTab,
     Outline,
@@ -49,13 +50,11 @@ extern const ToolButton kToolButtons[];
 extern const int kToolButtonCount;
 
 void drawChrome(App& app);          // tab strip, toolbar, find bar, status bar
-ChromeHit chromeHitTest(App& app, float x, float y);
+ChromeHit chromeHitTest(const App& app, float x, float y);
 D2D1_RECT_F toolButtonRect(const App& app, int index);
 void toolButtonRects(const App& app, D2D1_RECT_F* out);
 int toolButtonIndexAt(const App& app, float x, float y);
-D2D1_RECT_F tabRect(const App& app, int index);
-D2D1_RECT_F newTabRect(const App& app);
-D2D1_RECT_F closeTabRect(const App& app, int index);
+D2D1_RECT_F tabOverflowRect(const App& app);
 D2D1_RECT_F findBarRect(const App& app);
 D2D1_RECT_F captionIconRect(const App& app);
 D2D1_RECT_F captionMinRect(const App& app);

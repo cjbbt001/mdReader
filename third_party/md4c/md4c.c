@@ -4676,6 +4676,7 @@ struct MD_BLOCK_tag {
      * MD_BLOCK_OL:     Start item number.
      */
     MD_SIZE n_lines;
+    OFF source_end;            /* MdReader: closing fence or Setext underline. */
 };
 
 struct MD_CONTAINER_tag {
@@ -4848,6 +4849,22 @@ md_process_leaf_block(MD_CTX* ctx, const MD_BLOCK* block)
         default:
             /* Noop. */
             break;
+    }
+
+    if(ctx->parser.leaf_range != NULL && block->n_lines > 0) {
+        OFF beg, end;
+        if(block->type == MD_BLOCK_CODE || block->type == MD_BLOCK_HTML) {
+            const MD_VERBATIMLINE* lines = (const MD_VERBATIMLINE*)(block + 1);
+            beg = lines[0].beg;
+            end = lines[block->n_lines - 1].end;
+        } else {
+            const MD_LINE* lines = (const MD_LINE*)(block + 1);
+            beg = lines[0].beg;
+            end = lines[block->n_lines - 1].end;
+        }
+        if(block->source_end > end)
+            end = block->source_end;
+        ctx->parser.leaf_range(beg, end, ctx->userdata);
     }
 
     if(!is_in_tight_list  ||  block->type != MD_BLOCK_P)
@@ -5055,6 +5072,7 @@ md_start_new_block(MD_CTX* ctx, const MD_LINE_ANALYSIS* line)
     block->flags = 0;
     block->data = line->data;
     block->n_lines = 0;
+    block->source_end = 0;
 
     ctx->current_block = block;
     return 0;
@@ -5138,6 +5156,8 @@ md_end_current_block(MD_CTX* ctx)
 
         if(n_lines > 1) {
             /* Get rid of the underline. */
+            const MD_LINE* lines = (const MD_LINE*)(ctx->current_block + 1);
+            ctx->current_block->source_end = lines[n_lines - 1].end;
             ctx->current_block->n_lines--;
             ctx->n_block_bytes -= sizeof(MD_LINE);
         } else {
@@ -5889,6 +5909,8 @@ md_analyze_line(MD_CTX* ctx, OFF beg, OFF* p_end,
             if(line->indent < ctx->code_indent_offset) {
                 if(md_is_closing_code_fence(ctx, CH(pivot_line->beg), off, &off)) {
                     line->type = MD_LINE_BLANK;
+                    if(ctx->current_block != NULL)
+                        ctx->current_block->source_end = off;
                     ctx->last_line_has_list_loosening_effect = FALSE;
                     break;
                 }

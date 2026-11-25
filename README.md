@@ -1,129 +1,83 @@
 # MdReader
 
-Windows 上的极简 Markdown 阅读器 / 编辑器。Win32 + Direct2D + DirectWrite + md4c，C++20，无框架。单文件 1.4 MB，静态链接，不依赖 VC 运行库。
+面向 Windows 的轻量 Markdown 编辑器。解压后运行 MdReader.exe，可直接拖入 UTF-8 Markdown 文件。使用 Win32、Direct2D、DirectWrite 和 md4c，仅依赖 Windows 自带组件。
 
-<img src="docs/icon.png" width="72" align="right">
+![MdReader 界面示意](docs/screenshot.png)
 
-![screenshot](docs/screenshot.png)
+## 日常使用
 
-界面照记事本的样子排：标题栏里直接放"程序图标 + 标签页 + 新建 + 窗口按钮"，没有标题文字；下面是图标工具条、正文、状态栏。标题栏是自绘的（无边框窗口），窗口圆角取 Windows 11 的系统圆角。
+- **预览编辑**。点击段落会显示可编辑的 Markdown 标记，正文保留渲染后的字号。移开光标或按 Esc 隐藏标记。预览保留原始换行和连续空行，独占一行的 `<br />` 显示为空行。
+- **源码模式**。Ctrl+E 切换，两个模式共用编辑内容，支持中文输入、撤销重做和 Ctrl+S 保存。
+- **多文件**。标签过多时，用右侧下拉菜单切换。再次启动会恢复上次查看的文件和位置。
+- **文件同步**。打开的文件在外部保存后通常一秒左右刷新，并尽量保留滚动位置。本地有未保存修改时保留编辑内容，发生冲突会在保存时提示。
+- **导航**。点击网页、文档标题锚点或相对路径 Markdown 链接即可跳转。按住 Ctrl 点击链接可进入编辑。Ctrl+J 打开大纲。
+- **Markdown**。支持标题、列表、任务列表、引用、代码块、表格、分隔线和本地图片。粘贴图片会存到 Markdown 文件同级的 attachment 目录。
 
-源码模式（可编辑，`Ctrl+E`）：
-
-![source](docs/source.png)
-
-大纲面板（`Ctrl+J`）：
-
-![outline](docs/outline.png)
-
-## 功能
-
-**阅读**
-
-- CommonMark + GFM：标题、列表（有序 / 无序 / 嵌套 / 任务列表复选框）、引用、围栏代码块、表格、分隔线、删除线、行内代码
-- 代码块语法高亮：注释、字符串、数字、关键字，C 系 / Python / Shell / Markdown 共用一套词法
-- 图片：本地相对路径，WIC 后台线程解码，解码完成自动回流排版
-- 视口优先的增量排版：先排一屏就出帧，其余在空闲时补
-- 大纲面板：层级缩进、当前章节跟随高亮、点击跳转、滚轮独立滚动
-- 查找：`Ctrl+F`，源码模式按字符定位，预览模式跳到匹配块
-
-**编辑**
-
-- 源码模式：光标、选区（鼠标 / Shift）、中文 IME（输入法窗口跟随光标）、撤销（400 ms 内合并）、`Ctrl+S` 保存
-- 工具条 Markdown 命令：H1–H3、加粗、斜体、删除线、列表、引用、行内代码、链接、图片，作用于选区或当前行
-- 粘贴图片：`Ctrl+V`，支持资源管理器复制的图片文件、PNG 数据流、裸位图；存到文档同级 `attachment/`，插入 `![](attachment/xxx.png)`
-
-**外壳**
-
-- 标签页：新建 / 切换 / 关闭、脏标记、关闭前提示保存
-- 无边框窗口：边缘拖拽缩放、标题栏空白拖动、双击最大化、系统圆角
-- 深浅色跟随系统，工具条最左侧一键切换
-- 单实例：第二次启动把路径交给已运行的窗口（`WM_COPYDATA`）
-- `--register` / `--unregister` 写入 / 删除 HKCU 文件关联
-- 窗口尺寸和大纲开关状态持久化
-
-## 快捷键
-
-| 键 | 作用 | 键 | 作用 |
+| 快捷键 | 功能 | 快捷键 | 功能 |
 | --- | --- | --- | --- |
-| Ctrl+N | 新建标签页 | Ctrl+W | 关闭标签页 |
-| Ctrl+O | 打开 | Ctrl+S | 保存 |
-| Ctrl+Tab | 下一个标签页 | Ctrl+E | 源码 / 预览 |
-| Ctrl+J | 大纲 | Ctrl+F | 查找 |
-| Ctrl+B | 加粗 | Ctrl+I | 斜体 |
-| Ctrl+K | 链接 | Ctrl+Z / Ctrl+Y | 撤销 / 重做 |
-| Ctrl+A | 全选 | Ctrl+C / X / V | 复制 / 剪切 / 粘贴 |
-| F3 / Shift+F3 | 下一个 / 上一个匹配 | Esc | 关闭查找 |
+| Ctrl+N / Ctrl+W | 新建 / 关闭标签 | Ctrl+Tab | 切换标签 |
+| Ctrl+O / Ctrl+S | 打开 / 保存 | Ctrl+E | 预览 / 源码 |
+| Ctrl+F | 查找 | F3 / Shift+F3 | 下一个 / 上一个匹配 |
+| Ctrl+B / Ctrl+I | 加粗 / 斜体 | Ctrl+K | 插入链接 |
+| Ctrl+Z / Ctrl+Y | 撤销 / 重做 | Esc | 退出当前编辑或查找 |
 
-预览只读：滚轮、PageUp/PageDown、空格、Home/End、方向键。
-源码：方向键、Home/End、Ctrl+←/→ 按词移动、Shift 选中、Tab 缩进、Shift+滚轮横向滚动。
+## Windows x64 便携版
 
-## 下载与安装
+解压 MdReader-win64.zip 后双击 MdReader.exe。本地打包结果在 dist，可通过项目的 Releases 页面获取已发布版本。
+[GitHub Releases](https://github.com/cjbbt001/mdReader/releases)
 
-从 [Releases](https://github.com/cjbbt001/mdReader/releases) 下载 `MdReader-win64.zip`，解压即用（单个 exe，不写注册表）。
+命令行可接收 Markdown 文件路径。--dark 和 --light 可强制指定主题。需要关联 .md 文件时可运行 MdReader.exe --register，再通过 Windows 设置选择默认应用。--unregister 移除该注册。
 
-想要桌面快捷方式：把 exe 放到任意目录，右键 → 发送到 → 桌面快捷方式。
+## 1.1.0 实测
 
-```
-MdReader.exe <文件.md>
-MdReader.exe <文件.md> --dark | --light      强制主题
-MdReader.exe --register | --unregister      写入 / 删除 .md 文件关联
-```
+Windows 11 23H2，x64 Release。空白文件和随包示例各启动 5 次，取中位数。内存为窗口可见后约 1 秒的工作集。
+
+| 项目 | 结果 |
+| --- | ---: |
+| 单文件程序 | 1.41 MiB |
+| 空白文件窗口可见 | 58.7 ms |
+| 示例文件窗口可见 | 61.2 ms |
+| 空白文件工作集 | 44.8 MiB |
+| 示例文件工作集 | 47.2 MiB |
+
+排版先覆盖视口，再分批处理其余内容。图片使用 WIC 按需解码，文档同步仅在检测到磁盘变更后读取内容。含大量图片的文档会占用更多内存。
 
 ## 构建
 
-不需要 Visual Studio。装一个 MinGW-w64，把 `g++` / `gcc` / `windres` 放进 PATH（本机用便携版 [w64devkit](https://github.com/skeeto/w64devkit)，解压到 `.tools/w64devkit` 即可，`build.sh` 会自动找），然后：
+准备 MinGW-w64 的 gcc、g++ 和 windres，也可使用便携版 w64devkit。构建脚本会查找 .tools/w64devkit/w64devkit/bin。
 
-```sh
-sh build.sh          # -> build/MdReader.exe
-```
+~~~sh
+sh build.sh
+~~~
 
-MSVC：`cmake -B build-msvc -G "Visual Studio 17 2022" && cmake --build build-msvc --config Release`。
+程序生成在 build/MdReader.exe。使用 Visual Studio 2022 时可通过 CMake 构建。
 
-## 实测
+~~~powershell
+cmake -S . -B build/msvc -G "Visual Studio 17 2022" -A x64
+cmake --build build/msvc --config Release
+~~~
 
-Windows 11 23H2，2048×1152 @125%：
+tools/bench.c 可测量窗口可见时间与内存。使用独立样本文件，运行前关闭 MdReader。
 
-| 项目 | 数值 |
+~~~powershell
+gcc -O2 -municode tools/bench.c -o build/bench.exe -lpsapi
+build/bench.exe build/MdReader.exe samples/sample.md
+~~~
+
+## 代码目录
+
+| 文件 | 职责 |
 | --- | --- |
-| 二进制 | 1,489,408 字节（zip 约 596 KB） |
-| 窗口可见 | 47–78 ms |
-| 首帧内容 | 约 100 ms |
-| 空窗口内存 | 42 MB 工作集 |
-| 单帧绘制（1080×900） | 2–5 ms |
-| 源码 | 约 4,700 行 |
-
-## 设计取舍
-
-**渲染用软件后端**（`D2D1_RENDER_TARGET_TYPE_SOFTWARE`）。硬件渲染目标要 127 ms 建一次 D3D 设备，软件只要 8 ms，单帧 2–5 ms，纯文本完全够用。
-
-**没有 `CoInitializeEx` 之外的 COM 初始化**，D2D / DirectWrite / 文件对话框都不强制要求，只在打开对话框和 WIC 解码时按需初始化。
-
-**排版与绘制分离**：`layoutStep(app, untilY, budgetMs)` 只依赖视口尺寸和文档，不碰窗口状态。
-
-**内存的大头是 Direct2D / DirectWrite 本身**（空窗口 42 MB）。要压到记事本的个位数只能换成 GDI 绘制 + DirectWrite 排版，那是另一个工程量。
-
-## 目录
-
-```
-src/doc.{h,cpp}        md4c → Block 树（块、行内 run、图片、任务列表）
-src/layout.{h,cpp}     Block → Item，视口优先的增量排版
-src/graphics.cpp       D2D 设备、画笔、绘制、滚动几何、大纲面板
-src/chrome.cpp         标签栏（自绘标题栏）、工具条图标、查找栏、状态栏
-src/source.cpp         源码视图绘制与光标命中
-src/editor.cpp         文本缓冲区、光标/选区、撤销、Markdown 命令
-src/images.cpp         WIC 解码线程、位图缓存、剪贴板位图落盘
-src/highlight.cpp      代码块词法着色
-src/main.cpp           窗口过程、输入、标签页、查找、设置、文件关联
-third_party/md4c/      MIT，Markdown 解析 v0.5.2
-tools/bench.c          启动时间 / 内存测量
-```
+| src/main.cpp、src/chrome.cpp | 窗口、标签、查找、设置与文件刷新调度 |
+| src/files.cpp | UTF-8 读写、文件版本检查和原子保存 |
+| src/editor.cpp、src/preview.cpp、src/source.cpp | 编辑缓冲区、预览编辑和源码视图 |
+| src/doc.cpp、src/layout.cpp、src/graphics.cpp | Markdown 解析、排版和绘制 |
+| src/images.cpp、src/highlight.cpp | 本地图片和代码着色 |
+| third_party/md4c | md4c 0.5.2，MIT 许可 |
 
 ## 已知限制
 
-- 表格单元格内的行内样式（粗体、链接）会丢，只留纯文本
-- 每个文件的滚动位置没有持久化（只存窗口尺寸和大纲开关）
-- 链接不能点击跳转（只着色）
-- 源码视图没有软换行和语法高亮，横向滚动只支持 Shift+滚轮
-- 撤销按整篇快照实现，超大文档（>5 MB）内存开销偏高
-- 图片只支持本地文件，不下载 http(s)
+- 源码模式使用横向滚动。按住 Shift 滚轮可横向移动。
+- 撤销历史按文档快照保存，总量约 16 MiB，至少保留一步。
+- 图片仅加载本地文件。远程图片不会下载。
+- 跨编辑器保存时，连续普通空行的数量取决于对方编辑器的 Markdown 规则。

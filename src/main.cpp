@@ -1,5 +1,6 @@
 #include "app.h"
 #include "chrome.h"
+#include "files.h"
 #include <commdlg.h>
 #include <shellapi.h>
 #include <dwmapi.h>
@@ -10,19 +11,15 @@
 #include <algorithm>
 #include <cmath>
 #include <imm.h>
+#include <iomanip>
 
-void srcDraw(App& app);
-void toggleTheme(App& app);
 float srcGutterW(const App& app);
 void srcHitTestPoint(App& app, float x, float y, Pos* p);
-void srcDrawEmbedded(App& app);
 float srcCaretX(App& app);
 float srcCaretY(App& app);
 float srcLineHeight();
 
 namespace {
-
-const float kCaretBlinkMs = 530.f;
 
 std::wstring exePath() {
     wchar_t buf[1024];
@@ -37,6 +34,7 @@ std::wstring statePath() {
         dir = p;
         CoTaskMemFree(p);
     }
+    if (dir.empty()) return {};
     dir += L"\\MDReader";
     CreateDirectoryW(dir.c_str(), nullptr);
     return dir + L"\\state.txt";
@@ -88,29 +86,6 @@ void updateViewport(App& app) {
     app.vh = (float)(rc.bottom - rc.top) * 96.f / app.dpi;
 }
 
-std::wstring readAllText(const std::wstring& path, bool* ok) {
-    std::ifstream f(path.c_str(), std::ios::binary);
-    if (!f) { if (ok) *ok = false; return std::wstring(); }
-    std::stringstream ss;
-    ss << f.rdbuf();
-    std::string s = ss.str();
-    if (s.size() >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB &&
-        (unsigned char)s[2] == 0xBF)
-        s.erase(0, 3);
-    if (ok) *ok = true;
-    return widen(s.c_str(), s.size());
-}
-
-bool writeAllText(const std::wstring& path, const std::wstring& text) {
-    int need = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0, nullptr, nullptr);
-    std::string utf8((size_t)need, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), &utf8[0], need, nullptr, nullptr);
-    std::ofstream f(path.c_str(), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(utf8.data(), (std::streamsize)utf8.size());
-    return f.good();
-}
-
 std::wstring fileNameOf(const std::wstring& path) {
     size_t slash = path.find_last_of(L"\\/");
     return slash == std::wstring::npos ? path : path.substr(slash + 1);
@@ -131,58 +106,110 @@ void newTab(App& app, const std::wstring& path, const std::wstring& text) {
     Tab t;
     t.path = path;
     t.name = path.empty() ? std::wstring() : fileNameOf(path);
+    if (app.hasTab()) finishPreviewEdit(app);
+    t.ed.setText(text);
     parseText(text, t.doc);
     buildToc(t.doc, t.toc);
-    t.ed.setText(text);
     app.tabs.push_back(std::move(t));
     app.active = (int)app.tabs.size() - 1;
-    app.showOutline = app.showOutline && !app.tab().toc.empty();
+    app.outlineScroll = 0.f;
     layoutReset(app);
+    ensureLayoutForView(app);
+    if (app.findOpen) { findRefresh(app); findJump(app); }
+    setTitle(app);
+    InvalidateRect(app.hwnd, nullptr, FALSE);
+}
+
+namespace {
+
+void checkExternalFile(App& app, int index) {
+    Tab& tab = app.tabs[(size_t)index];
+    if (tab.path.empty() || (index == app.active && (app.composing || app.selecting || app.dragThumb))) return;
+    const auto disk = fileStamp(tab.path);
+    if (!disk) return;
+    const bool changed = *disk != tab.fileStamp;
+    if (changed != tab.diskChanged) {
+        tab.diskChanged = changed;
+        if (index == app.active) InvalidateRect(app.hwnd, nullptr, FALSE);
+    }
+    if (!changed || tab.dirty || !disk->exists) return;
+
+    std::wstring text;
+    bool bom = false;
+    FileStamp loaded;
+    if (!readDocument(tab.path, text, bom, loaded)) return;
+    if (documentText(tab) != (bom ? L"\uFEFF" + text : text)) reloadTabFromDisk(app, index, text);
+    setEncoding(tab, text, bom);
+    tab.fileStamp = loaded;
+    tab.diskChanged = false;
+    if (index == app.active) InvalidateRect(app.hwnd, nullptr, FALSE);
+}
+
+bool openDocument(App& app, const std::wstring& pathIn, bool showError) {
+    std::wstring path = pathIn;
+    DWORD length = GetFullPathNameW(pathIn.c_str(), 0, nullptr, nullptr);
+    if (length) {
+        std::wstring full(length, L'\0');
+        DWORD used = GetFullPathNameW(pathIn.c_str(), length, full.data(), nullptr);
+        if (used && used < length) { full.resize(used); path = std::move(full); }
+    }
+    for (int i = 0; i < (int)app.tabs.size(); ++i) {
+        if (_wcsicmp(app.tabs[(size_t)i].path.c_str(), path.c_str()) == 0) {
+            selectTab(app, i);
+            return true;
+        }
+    }
+    std::wstring text;
+    bool bom = false;
+    FileStamp stamp;
+    if (!readDocument(path, text, bom, stamp)) {
+        if (showError)
+            MessageBoxW(app.hwnd, L"无法读取文件，或文件不是 UTF-8 文本。", L"MdReader", MB_ICONWARNING);
+        return false;
+    }
+    newTab(app, path, text);
+    app.tab().fileStamp = stamp;
+    setEncoding(app.tab(), text, bom);
+    app.lastFile = path;
+    if (!app.findOpen) restoreReadingPosition(app);
+    return true;
+}
+
+}  // namespace
+
+bool openPath(App& app, const std::wstring& path) { return openDocument(app, path, true); }
+
+void selectTab(App& app, int index) {
+    if (index < 0 || index >= (int)app.tabs.size()) return;
+    if (app.hasTab() && app.active != index) finishPreviewEdit(app);
+    app.active = index;
+    if (!app.tab().path.empty()) app.lastFile = app.tab().path;
+    checkExternalFile(app, index);
+    app.pendingSurrogate = 0;
+    if (!app.findOpen) app.matches.clear();
+    if (app.findOpen) { findRefresh(app); findJump(app); }
+    app.outlineScroll = 0.f;
     ensureLayoutForView(app);
     setTitle(app);
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
-void openPath(App& app, const std::wstring& pathIn) {
-    wchar_t full[1024] = L"";
-    std::wstring path = pathIn;
-    if (GetFullPathNameW(pathIn.c_str(), 1024, full, nullptr)) path = full;
-    for (int i = 0; i < (int)app.tabs.size(); ++i) {
-        if (_wcsicmp(app.tabs[(size_t)i].path.c_str(), path.c_str()) == 0) {
-            selectTab(app, i);
-            return;
-        }
-    }
-    bool ok = false;
-    std::wstring text = readAllText(path, &ok);
-    if (!ok) {
-        MessageBoxW(app.hwnd, L"无法打开文件", L"MdReader", MB_ICONWARNING);
-        return;
-    }
-    newTab(app, path, text);
-}
-
-void selectTab(App& app, int index) {
-    if (index < 0 || index >= (int)app.tabs.size()) return;
-    app.active = index;
-    app.outlineScroll = 0.f;
-    if (!app.tab().lay.done) {
-        ensureLayoutForView(app);
-    }
-    setTitle(app);
-    InvalidateRect(app.hwnd, nullptr, FALSE);
-}
-
-void closeTab(App& app, int index) {
-    if (index < 0 || index >= (int)app.tabs.size()) return;
+static bool confirmClose(App& app, int index) {
     if (app.tabs[(size_t)index].dirty) {
-        app.active = index;
+        selectTab(app, index);
         std::wstring name = app.tab().name.empty() ? L"无标题" : app.tab().name;
         std::wstring msg = name + L" 尚未保存，要保存吗？";
         int r = MessageBoxW(app.hwnd, msg.c_str(), L"MdReader", MB_YESNOCANCEL | MB_ICONWARNING);
-        if (r == IDCANCEL) return;
-        if (r == IDYES && !saveTab(app)) return;
+        if (r == IDYES) return saveTab(app);
+        if (r != IDNO) return false;
     }
+    return true;
+}
+
+void closeTab(App& app, int index) {
+    if (index < 0 || index >= (int)app.tabs.size() || !confirmClose(app, index)) return;
+    if (app.active == index) finishPreviewEdit(app);
+    rememberReadingPosition(app, app.tabs[(size_t)index]);
     app.tabs.erase(app.tabs.begin() + index);
     if (app.tabs.empty()) {
         app.active = -1;
@@ -191,35 +218,30 @@ void closeTab(App& app, int index) {
     } else if (app.active > index) {
         app.active--;
     }
+    if (app.hasTab() && !app.tab().path.empty()) app.lastFile = app.tab().path;
+    if (app.findOpen) { findRefresh(app); findJump(app); }
+    ensureLayoutForView(app);
     setTitle(app);
     InvalidateRect(app.hwnd, nullptr, FALSE);
-}
-
-void syncEditorToPreview(App& app) {
-    if (!app.hasTab()) return;
-    Tab& t = app.tab();
-    std::wstring text = t.ed.text();
-    Doc doc;
-    parseText(text, doc);
-    t.doc = std::move(doc);
-    buildToc(t.doc, t.toc);
-    float frac = t.ed.lineCount() > 1 ? (float)t.ed.firstLine / (float)t.ed.lineCount() : 0.f;
-    layoutReset(app);
-    ensureLayoutForView(app);
-    scrollTo(app, frac * std::max(0.f, t.lay.contentH - app.viewH()));
 }
 
 void switchMode(App& app, Mode mode) {
     if (!app.hasTab() || app.tab().mode == mode) return;
     Tab& t = app.tab();
     if (mode == Mode::Preview) {
+        t.mode = mode;
         syncEditorToPreview(app);
     } else {
-        t.ed.firstLine = 0;
-        app.findOpen = false;
-        edEnsureCaretVisible(app);
+        finishPreviewEdit(app);
+        const int block = t.pendingBlock >= 0 ? t.pendingBlock : blockAtScroll(app);
+        if (!t.doc.blocks.empty())
+            t.ed.firstLine = std::max(0, t.doc.blocks[(size_t)block].firstLine);
+        if (t.ed.caret.line < t.ed.firstLine ||
+            t.ed.caret.line >= t.ed.firstLine + (int)(app.viewH() / srcLineHeight()))
+            t.ed.moveTo({t.ed.firstLine, 0}, false);
+        t.mode = mode;
     }
-    t.mode = mode;
+    if (app.findOpen) { findRefresh(app); findJump(app); }
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
@@ -231,26 +253,37 @@ void toggleMode(App& app) {
 bool saveTab(App& app) {
     if (!app.hasTab()) return true;
     Tab& t = app.tab();
-    if (t.path.empty()) {
-        saveTabAs(app);
-        return !t.path.empty();
+    if (!t.dirty && !t.path.empty()) { checkExternalFile(app, app.active); return true; }
+    if (t.path.empty()) return saveTabAs(app);
+    const auto disk = fileStamp(t.path);
+    if (!disk) {
+        MessageBoxW(app.hwnd, L"无法确认文件当前状态，保存未完成。", L"MdReader", MB_ICONWARNING);
+        return false;
     }
-    if (!writeAllText(t.path, t.ed.text())) {
+    if (*disk != t.fileStamp) {
+        const int answer = MessageBoxW(app.hwnd,
+            L"磁盘上的文件已被其他程序修改或移走。\n\n是：用当前内容覆盖原路径\n否：另存为\n取消：继续编辑",
+            L"MdReader", MB_YESNOCANCEL | MB_DEFBUTTON3 | MB_ICONWARNING);
+        if (answer == IDNO) return saveTabAs(app);
+        if (answer != IDYES) return false;
+    }
+    if (!writeAllText(t.path, documentText(t), &*disk, &t.fileStamp)) {
         MessageBoxW(app.hwnd, L"保存失败", L"MdReader", MB_ICONWARNING);
         return false;
     }
     t.dirty = false;
+    t.diskChanged = false;
     t.ed.modified = false;
     setTitle(app);
     InvalidateRect(app.hwnd, nullptr, FALSE);
     return true;
 }
 
-void saveTabAs(App& app) {
-    if (!app.hasTab()) return;
+bool saveTabAs(App& app) {
+    if (!app.hasTab()) return false;
     wchar_t buf[1024] = L"";
     Tab& t = app.tab();
-    if (!t.name.empty()) wcscpy(buf, t.name.c_str());
+    wcsncpy_s(buf, t.name.c_str(), _TRUNCATE);
     OPENFILENAMEW ofn = {};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = app.hwnd;
@@ -258,26 +291,48 @@ void saveTabAs(App& app) {
     ofn.lpstrFile = buf;
     ofn.nMaxFile = 1024;
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-    if (!GetSaveFileNameW(&ofn)) return;
+    ofn.lpstrDefExt = L"md";
+    if (!GetSaveFileNameW(&ofn)) return false;
+    if (!writeAllText(buf, documentText(t), nullptr, &t.fileStamp)) {
+        MessageBoxW(app.hwnd, L"保存失败", L"MdReader", MB_ICONWARNING);
+        return false;
+    }
     t.path = buf;
     t.name = fileNameOf(buf);
-    saveTab(app);
+    app.lastFile = t.path;
+    t.diskChanged = false;
+    t.dirty = t.ed.modified = false;
+    reflowAnchor(app);
+    InvalidateRect(app.hwnd, nullptr, FALSE);
+    return true;
 }
 
 // ------------------------------------------------------------------ editor input
 
+static void prepareEditor(App& app) {
+    Tab& tab = app.tab();
+    if (tab.mode == Mode::Preview && tab.editFirst < 0) {
+        if (tab.ed.hasSelection()) return;
+        const int block = blockAtScroll(app);
+        if (!tab.doc.blocks.empty())
+            tab.ed.moveTo({tab.doc.blocks[(size_t)block].firstLine, 0}, false);
+        startPreviewEdit(app, tab.ed.caret, false);
+    }
+}
+
 void edInsertText(App& app, const std::wstring& s) {
-    if (!app.hasTab() || app.tab().mode != Mode::Source) return;
-    Tab& t = app.tab();
-    t.ed.snapshot(GetTickCount64());
-    t.ed.insert(s);
-    t.dirty = true;
-    edEnsureCaretVisible(app);
-    InvalidateRect(app.hwnd, nullptr, FALSE);
+    if (!app.hasTab()) return;
+    if (s.empty()) return;
+    prepareEditor(app);
+    Tab& tab = app.tab();
+    tab.ed.snapshot(GetTickCount64());
+    tab.ed.insert(s);
+    updatePreviewEditor(app, true);
 }
 
 void edSelectAll(App& app) {
     if (!app.hasTab()) return;
+    prepareEditor(app);
     Editor& ed = app.tab().ed;
     ed.anchor = Pos{0, 0};
     ed.caret = Pos{ed.lineCount() - 1, (int)ed.lines.back().size()};
@@ -289,22 +344,26 @@ void edCopy(App& app, bool cut) {
     Editor& ed = app.tab().ed;
     std::wstring sel = ed.selectedText();
     if (sel.empty()) return;
+    bool copied = false;
     if (OpenClipboard(app.hwnd)) {
         EmptyClipboard();
         size_t bytes = (sel.size() + 1) * sizeof(wchar_t);
         HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, bytes);
         if (h) {
             void* p = GlobalLock(h);
-            memcpy(p, sel.c_str(), bytes);
-            GlobalUnlock(h);
-            SetClipboardData(CF_UNICODETEXT, h);
+            if (p) {
+                memcpy(p, sel.c_str(), bytes);
+                GlobalUnlock(h);
+                copied = SetClipboardData(CF_UNICODETEXT, h) != nullptr;
+            }
+            if (!copied) GlobalFree(h);
         }
         CloseClipboard();
     }
-    if (cut) {
+    if (cut && copied) {
         ed.snapshot(GetTickCount64());
         ed.deleteSelection();
-        app.tab().dirty = true;
+        updatePreviewEditor(app, true);
     }
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
@@ -355,14 +414,10 @@ std::wstring uniqueAttachName(const std::wstring& dir, const std::wstring& wante
 }
 
 void insertImageRef(App& app, const std::wstring& relLink) {
-    Editor& ed = app.tab().ed;
-    ed.snapshot(GetTickCount64());
-    std::wstring line = std::wstring(L"![") + L"](" + relLink + L")";
-    if (ed.caret.col > 0) line = std::wstring(L"\n") + line;
-    ed.insert(line + std::wstring(L"\n"));
-    app.tab().dirty = true;
-    edEnsureCaretVisible(app);
-    InvalidateRect(app.hwnd, nullptr, FALSE);
+    prepareEditor(app);
+    std::wstring line = L"![](" + relLink + L")";
+    if (app.tab().ed.caret.col > 0) line.insert(0, 1, L'\n');
+    edInsertText(app, line + L'\n');
 }
 
 // Files copied in Explorer: keep the original bytes and link them.
@@ -452,7 +507,7 @@ bool pasteDib(App& app) {
 }  // namespace
 
 void edPaste(App& app) {
-    if (!app.hasTab() || app.tab().mode != Mode::Source) return;
+    if (!app.hasTab()) return;
 
     bool hasText = IsClipboardFormatAvailable(CF_UNICODETEXT) != 0;
     bool hasFiles = IsClipboardFormatAvailable(CF_HDROP) != 0;
@@ -468,8 +523,6 @@ void edPaste(App& app) {
             const wchar_t* p = (const wchar_t*)GlobalLock(h);
             if (p) {
                 std::wstring s = p;
-                for (auto& c : s)
-                    if (c == L'\r') c = L'\n';
                 GlobalUnlock(h);
                 CloseClipboard();
                 edInsertText(app, s);
@@ -485,47 +538,49 @@ void edPaste(App& app) {
 
 void edUndo(App& app) {
     if (!app.hasTab()) return;
-    if (app.tab().ed.undoStep()) {
-        app.tab().dirty = true;
-        edEnsureCaretVisible(app);
-    }
-    InvalidateRect(app.hwnd, nullptr, FALSE);
+    Tab& tab = app.tab();
+    if (!tab.ed.undoStep()) return;
+    if (tab.mode == Mode::Preview) tab.editFirst = tab.editLast = -1;
+    updatePreviewEditor(app, true);
 }
 
 void edRedo(App& app) {
     if (!app.hasTab()) return;
-    if (app.tab().ed.redoStep()) {
-        app.tab().dirty = true;
-        edEnsureCaretVisible(app);
-    }
-    InvalidateRect(app.hwnd, nullptr, FALSE);
+    Tab& tab = app.tab();
+    if (!tab.ed.redoStep()) return;
+    if (tab.mode == Mode::Preview) tab.editFirst = tab.editLast = -1;
+    updatePreviewEditor(app, true);
 }
 
 void edMouseDown(App& app, float x, float y, bool extend) {
-    if (!app.hasTab() || app.tab().mode != Mode::Source) return;
-    if (x < srcGutterW(app)) {
-        TCHAR unused = 0;
-        (void)unused;
-        return;
+    if (!app.hasTab()) return;
+    if (app.tab().mode == Mode::Preview) {
+        if (!previewMouseDown(app, x, y, extend)) return;
+    } else {
+        if (x < srcGutterW(app)) return;
+        Pos p;
+        srcHitTestPoint(app, x, y, &p);
+        app.tab().ed.moveTo(p, extend);
     }
-    Pos p;
-    srcHitTestPoint(app, x, y, &p);
-    app.tab().ed.moveTo(p, extend);
     app.selecting = true;
     SetCapture(app.hwnd);
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
 void edMouseDrag(App& app, float x, float y) {
-    if (!app.hasTab() || app.tab().mode != Mode::Source) return;
+    if (!app.hasTab()) return;
     Pos p;
-    srcHitTestPoint(app, x, y, &p);
-    app.tab().ed.caret = p;
+    if (app.tab().mode == Mode::Preview) {
+        if (!previewHitEditor(app, x, y, p)) return;
+    } else {
+        srcHitTestPoint(app, x, y, &p);
+    }
+    app.tab().ed.moveTo(p, true);
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
 void edKey(App& app, WPARAM vk, bool ctrl, bool shift) {
-    if (!app.hasTab() || app.tab().mode != Mode::Source) return;
+    if (!app.hasTab()) return;
     Tab& t = app.tab();
     Editor& ed = t.ed;
     bool changed = false;
@@ -537,8 +592,7 @@ void edKey(App& app, WPARAM vk, bool ctrl, bool shift) {
             const std::wstring& l = ed.line(ed.caret.line);
             while (col > 0 && iswspace(l[(size_t)col - 1])) --col;
             while (col > 0 && !iswspace(l[(size_t)col - 1])) --col;
-            ed.caret.col = col;
-            if (!shift) ed.anchor = ed.caret;
+            ed.moveTo({ed.caret.line, col}, shift);
         } else {
             ed.moveBy(0, -1, shift);
         }
@@ -549,8 +603,7 @@ void edKey(App& app, WPARAM vk, bool ctrl, bool shift) {
             const std::wstring& l = ed.line(ed.caret.line);
             while (col < (int)l.size() && !iswspace(l[(size_t)col])) ++col;
             while (col < (int)l.size() && iswspace(l[(size_t)col])) ++col;
-            ed.caret.col = col;
-            if (!shift) ed.anchor = ed.caret;
+            ed.moveTo({ed.caret.line, col}, shift);
         } else {
             ed.moveBy(0, 1, shift);
         }
@@ -558,8 +611,11 @@ void edKey(App& app, WPARAM vk, bool ctrl, bool shift) {
     }
     case VK_UP: ed.moveBy(-1, 0, shift); break;
     case VK_DOWN: ed.moveBy(1, 0, shift); break;
-    case VK_HOME: ed.moveLineEdge(false, shift); break;
-    case VK_END: ed.moveLineEdge(true, shift); break;
+    case VK_HOME:
+    case VK_END:
+        if (ctrl) ed.moveDocEdge(vk == VK_END, shift);
+        else ed.moveLineEdge(vk == VK_END, shift);
+        break;
     case VK_PRIOR: {
         int step = (int)std::floor(app.viewH() / srcLineHeight()) - 1;
         ed.moveBy(-step, 0, shift);
@@ -571,7 +627,8 @@ void edKey(App& app, WPARAM vk, bool ctrl, bool shift) {
         break;
     }
     case VK_BACK:
-        if (ctrl) {
+        if (!ed.hasSelection() && ed.caret == Pos{}) break;
+        if (ctrl && !ed.hasSelection() && ed.caret.col > 0) {
             Pos a = ed.caret;
             int col = a.col;
             const std::wstring& l = ed.line(a.line);
@@ -587,6 +644,8 @@ void edKey(App& app, WPARAM vk, bool ctrl, bool shift) {
         changed = true;
         break;
     case VK_DELETE:
+        if (!ed.hasSelection() && ed.caret.line == ed.lineCount() - 1 &&
+            ed.caret.col == (int)ed.lines.back().size()) break;
         ed.deleteForward();
         changed = true;
         break;
@@ -603,16 +662,12 @@ void edKey(App& app, WPARAM vk, bool ctrl, bool shift) {
         break;
     }
 
-    if (changed) {
-        t.dirty = true;
-        edEnsureCaretVisible(app);
-    }
-    InvalidateRect(app.hwnd, nullptr, FALSE);
+    updatePreviewEditor(app, changed);
 }
 
 void applyFormat(App& app, int action) {
     if (!app.hasTab()) return;
-    if (app.tab().mode != Mode::Source) switchMode(app, Mode::Source);
+    prepareEditor(app);
     Editor& ed = app.tab().ed;
     switch ((ChromeAction)action) {
     case ChromeAction::Bold: ed.wrapSelection(L"**", L"**"); break;
@@ -628,9 +683,7 @@ void applyFormat(App& app, int action) {
     case ChromeAction::Image: ed.wrapSelection(L"![", L"](image.png)"); break;
     default: return;
     }
-    app.tab().dirty = true;
-    edEnsureCaretVisible(app);
-    InvalidateRect(app.hwnd, nullptr, FALSE);
+    updatePreviewEditor(app, true);
 }
 
 // ------------------------------------------------------------------ find
@@ -643,40 +696,60 @@ std::wstring lowerCopy(const std::wstring& s) {
     return r;
 }
 
-int countIn(const std::wstring& hay, const std::wstring& needle) {
-    if (needle.empty()) return 0;
-    std::wstring h = lowerCopy(hay), n = lowerCopy(needle);
-    int c = 0;
-    for (size_t p = h.find(n); p != std::wstring::npos; p = h.find(n, p + n.size())) ++c;
-    return c;
+void collectMatches(App& app, const std::wstring& text, const std::wstring& needle, int block,
+                    int cell = -1) {
+    std::wstring folded = lowerCopy(text);
+    for (size_t pos = folded.find(needle); pos != std::wstring::npos;
+         pos = folded.find(needle, pos + needle.size()))
+        app.matches.push_back({pos, block, cell});
 }
 
 }  // namespace
 
 void findRefresh(App& app) {
-    app.findCount = 0;
-    app.findIndex = -1;
-    if (!app.hasTab() || app.findQuery.empty()) return;
-    if (app.tab().mode == Mode::Source) {
-        app.findCount = countIn(app.tab().ed.text(), app.findQuery);
-    } else {
-        int n = 0;
-        for (const auto& b : app.tab().doc.blocks) {
-            std::wstring text;
-            for (const auto& r : b.runs) text += r.text;
-            if (b.kind == BKind::Code) text = b.code;
-            n += countIn(text, app.findQuery);
+    app.matches.clear();
+    if (app.hasTab() && !app.findQuery.empty()) {
+        const Tab& tab = app.tab();
+        const std::wstring needle = lowerCopy(app.findQuery);
+        if (tab.mode == Mode::Source) {
+            collectMatches(app, tab.ed.text(), needle, -1);
+        } else {
+            for (int i = 0; i < (int)tab.doc.blocks.size(); ++i) {
+                const Block& block = tab.doc.blocks[(size_t)i];
+                if (block.kind == BKind::Table) {
+                    int cols = 0;
+                    for (const auto& row : block.cells) cols = std::max(cols, (int)row.size());
+                    int rowIndex = 0;
+                    for (const auto& row : block.cells) {
+                        for (int col = 0; col < (int)row.size(); ++col) {
+                            std::wstring text;
+                            for (const auto& run : row[(size_t)col]) text += run.text;
+                            collectMatches(app, text, needle, i, rowIndex * cols + col);
+                        }
+                        ++rowIndex;
+                    }
+                } else {
+                    std::wstring text = block.code;
+                    for (const auto& run : block.runs) text += run.text;
+                    collectMatches(app, text, needle, i);
+                }
+            }
         }
-        app.findCount = n;
     }
-    if (app.findCount > 0 && app.findIndex < 0) app.findIndex = 0;
+    app.findCount = (int)app.matches.size();
+    app.findIndex = app.matches.empty() ? -1 : 0;
 }
 
 void findOpenBar(App& app) {
+    if (app.hasTab()) finishPreviewEdit(app);
     app.findOpen = true;
-    app.findQuery.clear();
-    app.findCount = 0;
-    app.findIndex = -1;
+    if (app.hasTab() && app.tab().mode == Mode::Source) {
+        const auto selected = app.tab().ed.selectedText();
+        if (!selected.empty() && selected.find(L'\n') == std::wstring::npos)
+            app.findQuery = selected;
+    }
+    findRefresh(app);
+    findJump(app);
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
@@ -693,41 +766,37 @@ void findType(App& app, wchar_t ch) {
 
 void findBackspace(App& app) {
     if (app.findQuery.empty()) return;
+    if (IS_LOW_SURROGATE(app.findQuery.back()) && app.findQuery.size() > 1 &&
+        IS_HIGH_SURROGATE(app.findQuery[app.findQuery.size() - 2]))
+        app.findQuery.pop_back();
     app.findQuery.pop_back();
     findRefresh(app);
     findJump(app);
 }
 
 void findJump(App& app) {
-    if (!app.hasTab() || app.findQuery.empty()) return;
-    Tab& t = app.tab();
-    if (t.mode == Mode::Source) {
-        std::wstring text = t.ed.text();
-        std::wstring h = lowerCopy(text), n = lowerCopy(app.findQuery);
-        if (n.empty()) return;
-        size_t pos = h.find(n);
-        if (pos == std::wstring::npos) return;
-        Pos p = t.ed.indexToPos(pos);
-        t.ed.moveTo(p, false);
-        t.ed.firstLine = std::max(0, p.line - 3);
+    if (!app.hasTab() || app.findIndex < 0 || app.findIndex >= app.findCount) return;
+    Tab& tab = app.tab();
+    const auto& match = app.matches[(size_t)app.findIndex];
+    if (tab.mode == Mode::Source) {
+        const Pos start = tab.ed.indexToPos(match.offset);
+        tab.ed.moveTo(start, false);
+        tab.ed.moveTo(tab.ed.indexToPos(match.offset + app.findQuery.size()), true);
+        tab.ed.firstLine = std::max(0, start.line - 3);
         edEnsureCaretVisible(app);
     } else {
-        for (const auto& b : t.doc.blocks) {
-            std::wstring text;
-            for (const auto& r : b.runs) text += r.text;
-            if (b.kind == BKind::Code) text = b.code;
-            if (!countIn(text, app.findQuery)) continue;
-            int idx = (int)(&b - &t.doc.blocks[0]);
-            scrollToBlock(app, idx);
-            break;
-        }
+        scrollToBlock(app, match.block);
     }
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
 void findNext(App& app, int dir) {
     if (!app.hasTab() || app.findQuery.empty()) return;
-    findRefresh(app);
+    if (!app.findOpen) {
+        finishPreviewEdit(app);
+        if (app.matches.empty()) findRefresh(app);
+        app.findOpen = true;
+    }
     if (app.findCount <= 0) return;
     app.findIndex = (app.findIndex + dir + app.findCount) % app.findCount;
     findJump(app);
@@ -746,18 +815,35 @@ void loadState(App& app) {
                 SetWindowPos(app.hwnd, nullptr, l, t, w, h, SWP_NOZORDER);
         } else if (line.rfind("outline=", 0) == 0) {
             app.showOutline = line[8] == '1';
+        } else if (line.rfind("last=", 0) == 0) {
+            std::istringstream record(line.substr(5));
+            std::string path;
+            if (record >> std::quoted(path)) app.lastFile = widen(path.data(), path.size());
+        } else if (line.rfind("read=", 0) == 0 && app.readingPositions.size() < 100) {
+            std::istringstream record(line.substr(5));
+            std::string path;
+            int row;
+            float offset;
+            if (record >> row >> offset >> std::quoted(path) &&
+                row >= 0 && std::isfinite(offset) && !path.empty())
+                app.readingPositions.push_back({widen(path.data(), path.size()), row, offset});
         }
     }
+    if (app.lastFile.empty() && !app.readingPositions.empty()) app.lastFile = app.readingPositions.back().path;
 }
 
 void saveState(App& app) {
     RECT rc = {};
     GetWindowRect(app.hwnd, &rc);
-    std::ofstream f(statePath().c_str(), std::ios::trunc);
-    if (!f) return;
+    std::wostringstream f;
     f << "win=" << rc.left << "," << rc.top << "," << (rc.right - rc.left) << ","
       << (rc.bottom - rc.top) << "\n";
     f << "outline=" << (app.showOutline ? 1 : 0) << "\n";
+    f << "last=" << std::quoted(app.lastFile) << '\n';
+    for (const auto& pos : app.readingPositions)
+        f << "read=" << pos.line << ' ' << pos.offset << ' ' << std::quoted(pos.path) << '\n';
+    const std::wstring path = statePath();
+    if (!path.empty()) writeAllText(path, f.str());
 }
 
 // ------------------------------------------------------------------ shell
@@ -768,8 +854,8 @@ void registerShell(bool install) {
     std::wstring quoted = L"\"" + exe + L"\" \"%1\"";
     if (install) {
         // Drop keys written by the previous product name.
-        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\Classes\MDReader.md");
-        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\Classes\Applications\mdreader.exe");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\MDReader.md");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\mdreader.exe");
 
         HKEY k;
         if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\MdReader.md", 0, nullptr, 0,
@@ -867,13 +953,25 @@ float dipX(App& app, int px) { return (float)px * 96.f / app.dpi; }
 float dipY(App& app, int px) { return (float)px * 96.f / app.dpi; }
 
 void positionIme(App& app) {
-    if (!app.hasTab() || app.tab().mode != Mode::Source) return;
+    if (!app.hasTab()) return;
     HIMC imc = ImmGetContext(app.hwnd);
     if (!imc) return;
     COMPOSITIONFORM cf = {};
     cf.dwStyle = CFS_POINT;
-    cf.ptCurrentPos.x = (LONG)(srcCaretX(app) * app.dpi / 96.f);
-    cf.ptCurrentPos.y = (LONG)((srcCaretY(app) + srcLineHeight()) * app.dpi / 96.f);
+    float x = 0.f, y = app.contentTop(), height = srcLineHeight();
+    if (app.findOpen) {
+        const auto bar = findBarRect(app);
+        x = bar.left;
+        y = bar.top;
+        height = bar.bottom - bar.top;
+    } else if (app.tab().mode == Mode::Source) {
+        x = srcCaretX(app);
+        y = srcCaretY(app);
+    } else {
+        previewCaretPoint(app, x, y, height);
+    }
+    cf.ptCurrentPos.x = (LONG)(x * app.dpi / 96.f);
+    cf.ptCurrentPos.y = (LONG)((y + height) * app.dpi / 96.f);
     ImmSetCompositionWindow(imc, &cf);
     ImmReleaseContext(app.hwnd, imc);
 }
@@ -881,6 +979,27 @@ void positionIme(App& app) {
 void handleChrome(App& app, ChromeAction a, int index) {
     switch (a) {
     case ChromeAction::NewTab: newTab(app, L"", L""); break;
+    case ChromeAction::TabMenu: {
+        HMENU menu = CreatePopupMenu();
+        if (!menu) break;
+        for (size_t i = 0; i < app.tabs.size(); ++i) {
+            const Tab& tab = app.tabs[i];
+            std::wstring label = tab.name.empty() ? L"无标题" : tab.name;
+            for (size_t at = label.find(L'&'); at != std::wstring::npos; at = label.find(L'&', at + 2))
+                label.insert(at, 1, L'&');
+            if (tab.dirty) label += L" *";
+            AppendMenuW(menu, MF_STRING | ((int)i == app.active ? MF_CHECKED : 0),
+                        (UINT_PTR)i + 1, label.c_str());
+        }
+        const auto bounds = tabOverflowRect(app);
+        POINT point = {(LONG)(bounds.left * app.dpi / 96.f), (LONG)(bounds.bottom * app.dpi / 96.f)};
+        ClientToScreen(app.hwnd, &point);
+        const UINT selected = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                                             point.x, point.y, 0, app.hwnd, nullptr);
+        DestroyMenu(menu);
+        if (selected) selectTab(app, (int)selected - 1);
+        break;
+    }
     case ChromeAction::CloseTab: closeTab(app, index); break;
     case ChromeAction::SelectTab: selectTab(app, index); break;
     case ChromeAction::Outline: toggleOutline(app); break;
@@ -912,12 +1031,15 @@ void handleChrome(App& app, ChromeAction a, int index) {
 void onKeyDown(App& app, WPARAM vk, bool ctrl, bool shift, bool alt) {
     (void)alt;
     if (app.findOpen) {
+        if (ctrl && vk == 'S') { saveTab(app); return; }
         if (vk == VK_ESCAPE) { findClose(app); return; }
         if (vk == VK_RETURN) { findNext(app, shift ? -1 : 1); return; }
         if (vk == VK_BACK) { findBackspace(app); return; }
         if (vk == VK_F3) { findNext(app, shift ? -1 : 1); return; }
         return;
     }
+
+    if (vk == VK_F3) { findNext(app, shift ? -1 : 1); return; }
 
     if (ctrl) {
         switch (vk) {
@@ -933,9 +1055,7 @@ void onKeyDown(App& app, WPARAM vk, bool ctrl, bool shift, bool alt) {
         case 'K': applyFormat(app, (int)ChromeAction::Link); return;
         case 'Z': edUndo(app); return;
         case 'Y': edRedo(app); return;
-        case 'A':
-            if (app.hasTab() && app.tab().mode == Mode::Source) { edSelectAll(app); return; }
-            break;
+        case 'A': if (app.hasTab()) edSelectAll(app); return;
         case 'C': edCopy(app, false); return;
         case 'X': edCopy(app, true); return;
         case 'V': edPaste(app); return;
@@ -946,7 +1066,13 @@ void onKeyDown(App& app, WPARAM vk, bool ctrl, bool shift, bool alt) {
         }
     }
 
-    if (app.hasTab() && app.tab().mode == Mode::Source) {
+    if (app.hasTab() && (app.tab().mode == Mode::Source || app.tab().editFirst >= 0 ||
+                         (app.tab().doc.blocks.empty() && vk == VK_RETURN))) {
+        if (vk == VK_ESCAPE && app.tab().mode == Mode::Preview) {
+            finishPreviewEdit(app);
+            return;
+        }
+        prepareEditor(app);
         edKey(app, vk, ctrl, shift);
         positionIme(app);
         return;
@@ -1033,6 +1159,13 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         if (captionIsEmpty(*app, x, y)) return HTCAPTION;
         return HTCLIENT;
     }
+    case WM_GETMINMAXINFO: {
+        auto* info = (MINMAXINFO*)lp;
+        const float scale = (app ? app->dpi : (float)dpiOf(h)) / 96.f;
+        info->ptMinTrackSize.x = (LONG)(400.f * scale);
+        info->ptMinTrackSize.y = (LONG)(235.f * scale);
+        return 0;
+    }
     case WM_NCACTIVATE:
         if (app) InvalidateRect(h, nullptr, FALSE);
         break;
@@ -1081,8 +1214,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             DragAcceptFiles(h, TRUE);
             if (!app->pendingFile.empty())
                 openPath(*app, app->pendingFile);
-            else
-                newTab(*app, L"", L"");
+            else if (!app->lastFile.empty())
+                openDocument(*app, app->lastFile, false);
+            if (!app->hasTab()) newTab(*app, L"", L"");
+            SetTimer(h, 3, 1000, nullptr);
             InvalidateRect(h, nullptr, FALSE);
         }
         return 0;
@@ -1099,13 +1234,21 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMER:
         if (!app) return 0;
         if (wp == 1) {
-            if (app->hasTab() && app->tab().mode == Mode::Preview) layoutStep(*app, 1e9f, 8);
-            if (!app->hasTab() || app->tab().lay.done) KillTimer(h, 1);
+            if (app->hasTab() && app->tab().mode == Mode::Preview) {
+                layoutStep(*app, 1e9f, 8);
+                if (app->tab().lay.edit.block < 0) layoutPreviewEditor(*app);
+                resolvePendingScroll(*app);
+                revealPreviewCaret(*app);
+            }
+            if (!app->hasTab() || app->tab().mode != Mode::Preview || app->tab().lay.done)
+                KillTimer(h, 1);
             InvalidateRect(h, nullptr, FALSE);
         } else if (wp == 2) {
             app->caretOn = !app->caretOn;
-            if ((app->hasTab() && app->tab().mode == Mode::Source) || app->findOpen)
+            if ((app->hasTab() && (app->tab().mode == Mode::Source || app->tab().editFirst >= 0)) || app->findOpen)
                 InvalidateRect(h, nullptr, FALSE);
+        } else if (wp == 3 && !app->closing) {
+            for (int i = 0; i < (int)app->tabs.size(); ++i) checkExternalFile(*app, i);
         }
         return 0;
     case WM_APP_IMAGE:
@@ -1139,9 +1282,18 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                     edMouseDown(*app, x, y, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
                     positionIme(*app);
                 } else {
-                    int oi = outlineHit(*app, x, y);
-                    if (oi >= 0) {
-                        scrollToBlock(*app, app->tab().toc[(size_t)oi].blockIndex);
+                    if (app->showOutline && x >= app->contentRight()) {
+                        finishPreviewEdit(*app);
+                        int oi = outlineHit(*app, x, y);
+                        if (oi >= 0) scrollToBlock(*app, app->tab().toc[(size_t)oi].blockIndex);
+                        return 0;
+                    }
+                    if (y >= app->vh - app->statusH) { finishPreviewEdit(*app); return 0; }
+                    const bool extend = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                    const bool editLink = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+                    const int link = previewLinkAt(*app, x, y);
+                    if (link >= 0 && !extend && !editLink) {
+                        openPreviewLink(*app, link);
                         return 0;
                     }
                     ScrollGeom g = scrollGeom(*app);
@@ -1154,11 +1306,37 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                         }
                         app->dragThumb = true;
                         SetCapture(h);
+                    } else {
+                        edMouseDown(*app, x, y, extend);
+                        positionIme(*app);
                     }
                 }
             }
         }
         return 0;
+    case WM_SETCURSOR:
+        if (app && LOWORD(lp) == HTCLIENT) {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(h, &pt);
+            const float x = dipX(*app, pt.x), y = dipY(*app, pt.y);
+            if (previewLinkAt(*app, x, y) >= 0) {
+                SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32649)));
+                return TRUE;
+            }
+        }
+        break;
+    case WM_CAPTURECHANGED:
+        if (app) app->dragThumb = app->selecting = false;
+        return 0;
+    case WM_KILLFOCUS:
+        if (app && app->hasTab()) {
+            app->composing = false;
+            app->pendingSurrogate = 0;
+            finishPreviewEdit(*app);
+            InvalidateRect(h, nullptr, FALSE);
+        }
+        break;
     case WM_LBUTTONUP:
         if (app) {
             if (app->dragThumb) { app->dragThumb = false; ReleaseCapture(); }
@@ -1189,13 +1367,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 InvalidateRect(h, nullptr, FALSE);
             }
             int hover = toolButtonIndexAt(*app, x, y);
-            int closeTab = -1;
-            if (y < app->tabStripH) {
-                for (int i = 0; i < (int)app->tabs.size(); ++i) {
-                    D2D1_RECT_F c = closeTabRect(*app, i);
-                    if (x >= c.left && x <= c.right && y >= c.top && y <= c.bottom) closeTab = i;
-                }
-            }
+            const auto tabHit = chromeHitTest(*app, x, y);
+            const int closeTab = tabHit.action == ChromeAction::CloseTab ? tabHit.index : -1;
             if (hover != app->hoverBtn || closeTab != app->hoverCloseTab) {
                 app->hoverBtn = hover;
                 app->hoverCloseTab = closeTab;
@@ -1236,19 +1409,32 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 if (c >= 32 && c != 127) findType(*app, c);
                 return 0;
             }
-            if (app->hasTab() && app->tab().mode == Mode::Source) {
+            if (app->hasTab()) {
                 // Enter and Tab arrive through WM_KEYDOWN; ignore the WM_CHAR copies.
                 if (c == L'\r' || c == L'\t') return 0;
-                if (c >= 32 && c != 127) {
-                    wchar_t buf[2] = {c, 0};
-                    edInsertText(*app, buf);
+                if (c == L' ' && app->tab().mode == Mode::Preview && app->tab().editFirst < 0 &&
+                    !app->tab().doc.blocks.empty()) return 0;
+                if (IS_HIGH_SURROGATE(c)) {
+                    app->pendingSurrogate = c;
+                } else if (c >= 32 && c != 127) {
+                    std::wstring text;
+                    if (IS_LOW_SURROGATE(c)) {
+                        if (!app->pendingSurrogate) return 0;
+                        text += app->pendingSurrogate;
+                    }
+                    app->pendingSurrogate = 0;
+                    text += c;
+                    edInsertText(*app, text);
                 }
                 return 0;
             }
         }
         return 0;
     case WM_IME_STARTCOMPOSITION:
-        if (app) positionIme(*app);
+        if (app) { app->composing = true; positionIme(*app); }
+        break;
+    case WM_IME_ENDCOMPOSITION:
+        if (app) app->composing = false;
         break;
     case WM_IME_COMPOSITION:
         if (app && (lp & GCS_RESULTSTR)) {
@@ -1259,7 +1445,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                     std::wstring s((size_t)(bytes / sizeof(wchar_t)), L'\0');
                     ImmGetCompositionStringW(imc, GCS_RESULTSTR, &s[0], bytes);
                     if (app->findOpen) {
-                        for (wchar_t c : s) findType(*app, c);
+                        app->findQuery += s;
+                        findRefresh(*app);
+                        findJump(*app);
                     } else {
                         edInsertText(*app, s);
                     }
@@ -1307,6 +1495,23 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             }
         }
         return 0;
+    case WM_CLOSE:
+        if (app) {
+            if (app->closing) return 0;
+            app->closing = true;
+            const int previousActive = app->active;
+            const std::wstring previousLast = app->lastFile;
+            for (int i = 0; i < (int)app->tabs.size(); ++i)
+                if (!confirmClose(*app, i)) { app->closing = false; return 0; }
+            if (app->hasTab()) finishPreviewEdit(*app);
+            for (const auto& tab : app->tabs) rememberReadingPosition(*app, tab);
+            if (previousActive >= 0 && !app->tabs[(size_t)previousActive].path.empty())
+                app->lastFile = app->tabs[(size_t)previousActive].path;
+            else if (!previousLast.empty()) app->lastFile = previousLast;
+            saveState(*app);
+        }
+        DestroyWindow(h);
+        return 0;
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -1338,7 +1543,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
         }
         LocalFree(argv);
     }
-    app.themeDark = hasDark ? true : (hasLight ? false : systemDark());
+    app.forceTheme = hasDark ? 1 : (hasLight ? 2 : 0);
+    app.themeDark = hasDark || (!hasLight && systemDark());
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"MDReader.SingleInstance");
     if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -1362,6 +1568,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
+    wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(1));
     wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
     wc.lpszClassName = L"MdReaderWindow";
     if (!RegisterClassExW(&wc)) return 1;
@@ -1385,7 +1592,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }
-    saveState(app);
     if (mutex) CloseHandle(mutex);
     return 0;
 }

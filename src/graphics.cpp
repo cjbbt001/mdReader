@@ -19,9 +19,25 @@ ComPtr<IDWriteTextFormat> makeFormat(App& app, const wchar_t* family, float size
     return f;
 }
 
+void drawFindMatch(App& app, int block, int cell, IDWriteTextLayout* layout, D2D1_POINT_2F p) {
+    if (!layout || !app.findOpen || app.findIndex < 0 || app.findIndex >= app.findCount) return;
+    const App::Match& match = app.matches[(size_t)app.findIndex];
+    if (match.block != block || match.cell != cell) return;
+    UINT32 count = 0;
+    const UINT32 offset = (UINT32)match.offset, length = (UINT32)app.findQuery.size();
+    layout->HitTestTextRange(offset, length, p.x, p.y, nullptr, 0, &count);
+    if (!count) return;
+    std::vector<DWRITE_HIT_TEST_METRICS> hits(count);
+    if (FAILED(layout->HitTestTextRange(offset, length, p.x, p.y, hits.data(), count, &count))) return;
+    for (const auto& hit : hits)
+        app.rt->FillRectangle(rect(hit.left, hit.top, hit.left + hit.width, hit.top + hit.height),
+                              app.brHilite.get());
+}
+
 void drawText(App& app, const Item& it) {
     if (!it.tl) return;
     D2D1_POINT_2F pt = {it.x, it.y};
+    drawFindMatch(app, it.blockIndex, -1, it.tl.get(), pt);
     app.rt->DrawTextLayout(pt, it.tl.get(), app.brText.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
 
@@ -48,7 +64,8 @@ void drawMarker(App& app, const Item& it) {
         return;
     }
 
-    D2D1_RECT_F rc = rect(it.x - 26.f, it.y + it.baseline - 20.f, it.x - 7.f,
+    const float markerWidth = std::max(19.f, 9.f * (float)it.marker.size());
+    D2D1_RECT_F rc = rect(it.x - 7.f - markerWidth, it.y + it.baseline - 20.f, it.x - 7.f,
                           it.y + it.baseline + 6.f);
     IDWriteTextFormat* fmt = app.fmtMarkerRight.get();
     app.rt->DrawText(it.marker.c_str(), (UINT32)it.marker.size(), fmt, rc, app.brMuted.get(),
@@ -79,19 +96,21 @@ void drawTable(App& app, const Item& it) {
             auto& tl = it.cells[(size_t)r * (size_t)it.cols + (size_t)c];
             if (!tl) continue;
             D2D1_POINT_2F pt = {it.colX[c] + 10.f, it.rowY[r] + 10.f};
+            drawFindMatch(app, it.blockIndex, r * it.cols + c, tl.get(), pt);
             app.rt->DrawTextLayout(pt, tl.get(), app.brText.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
         }
     }
 }
 
-void drawCode(App& app, const Item& it) {
+void drawCode(App& app, const Item& it, bool showText = true) {
     D2D1_ROUNDED_RECT rr;
     rr.rect = rect(it.x, it.y, it.x + it.w, it.y + it.h);
     rr.radiusX = 6.f;
     rr.radiusY = 6.f;
     app.rt->FillRoundedRectangle(rr, app.brCodeBg.get());
-    if (it.tl) {
-        D2D1_POINT_2F pt = {it.x + 12.f, it.y + 12.f};
+    if (showText && it.tl) {
+        D2D1_POINT_2F pt = {it.x + 12.f, it.y + it.codePadY};
+        drawFindMatch(app, it.blockIndex, -1, it.tl.get(), pt);
         app.rt->DrawTextLayout(pt, it.tl.get(), app.brCodeText.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 }
@@ -132,7 +151,6 @@ bool initGraphics(App& app) {
         return false;
 
     app.fmtBody = makeFormat(app, L"Segoe UI", 16.f, DWRITE_FONT_WEIGHT_NORMAL, 1.62f);
-    app.fmtQuote = makeFormat(app, L"Segoe UI", 16.f, DWRITE_FONT_WEIGHT_NORMAL, 1.62f);
     app.fmtHead[0] = makeFormat(app, L"Segoe UI", 30.f, DWRITE_FONT_WEIGHT_BOLD, 1.30f);
     app.fmtHead[1] = makeFormat(app, L"Segoe UI", 23.f, DWRITE_FONT_WEIGHT_BOLD, 1.35f);
     app.fmtHead[2] = makeFormat(app, L"Segoe UI", 19.f, DWRITE_FONT_WEIGHT_BOLD, 1.40f);
@@ -142,9 +160,11 @@ bool initGraphics(App& app) {
     app.fmtCode = makeFormat(app, L"Consolas", 13.5f, DWRITE_FONT_WEIGHT_NORMAL, 1.55f);
     app.fmtTable = makeFormat(app, L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_NORMAL, 1.45f);
     app.fmtTableHead = makeFormat(app, L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_BOLD, 1.45f);
-    app.fmtMarker = makeFormat(app, L"Segoe UI", 16.f, DWRITE_FONT_WEIGHT_NORMAL, 1.6f);
     app.fmtMarkerRight = makeFormat(app, L"Segoe UI", 16.f, DWRITE_FONT_WEIGHT_NORMAL, 1.6f);
-    if (app.fmtMarkerRight) app.fmtMarkerRight->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    if (app.fmtMarkerRight) {
+        app.fmtMarkerRight->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        app.fmtMarkerRight->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
 
     app.fmtToc = makeFormat(app, L"Segoe UI", 14.f, DWRITE_FONT_WEIGHT_NORMAL, 1.5f);
     if (app.fmtToc) {
@@ -162,8 +182,15 @@ bool initGraphics(App& app) {
     }
     app.fmtTab = makeFormat(app, L"Segoe UI", 13.f, DWRITE_FONT_WEIGHT_NORMAL, 1.35f);
     app.fmtTabActive = makeFormat(app, L"Segoe UI", 13.f, DWRITE_FONT_WEIGHT_SEMI_BOLD, 1.35f);
-    for (IDWriteTextFormat* f : {app.fmtTab.get(), app.fmtTabActive.get()})
-        if (f) f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    for (IDWriteTextFormat* f : {app.fmtTab.get(), app.fmtTabActive.get()}) {
+        if (!f) continue;
+        f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        ComPtr<IDWriteInlineObject> ellipsis;
+        DWRITE_TRIMMING trimming = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        if (SUCCEEDED(app.dwrite->CreateEllipsisTrimmingSign(f, ellipsis.put())))
+            f->SetTrimming(&trimming, ellipsis.get());
+    }
     app.fmtStatus = makeFormat(app, L"Segoe UI", 12.5f, DWRITE_FONT_WEIGHT_NORMAL, 1.4f);
     if (app.fmtStatus) app.fmtStatus->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     app.fmtSource = makeFormat(app, L"Consolas", 14.f, DWRITE_FONT_WEIGHT_NORMAL, 1.43f);
@@ -317,8 +344,9 @@ void applyTheme(App& app) {
 ScrollGeom scrollGeom(const App& app) {
     ScrollGeom g = {};
     float trackH = app.viewH() - 16.f;
-    float contentH = std::max(app.tab().lay.contentH, app.viewH());
-    g.visible = app.tab().lay.contentH > app.viewH() + 1.f;
+    const Layout& layout = app.tab().lay;
+    float contentH = std::max({layout.contentH, layout.heightFloor, app.viewH()});
+    g.visible = contentH > app.viewH() + 1.f;
     g.trackW = 8.f;
     g.trackX = app.contentRight() - g.trackW - 4.f;
     g.trackY = app.contentTop() + 8.f;
@@ -340,7 +368,8 @@ void scrollToThumb(App& app, float thumbY) {
     float t = (thumbY - g.trackY) / span;
     if (t < 0.f) t = 0.f;
     if (t > 1.f) t = 1.f;
-    float contentH = std::max(app.tab().lay.contentH, app.viewH());
+    const Layout& layout = app.tab().lay;
+    float contentH = std::max({layout.contentH, layout.heightFloor, app.viewH()});
     scrollTo(app, t * (contentH - app.viewH()));
 }
 
@@ -350,15 +379,26 @@ void scrollTo(App& app, float y) {
         float maxY = std::max(0.f, app.tab().lay.contentH - app.viewH());
         if (y > maxY) y = maxY;
     }
-    if (app.hasTab()) app.tab().scrollY = y;
+    if (app.hasTab()) {
+        app.tab().pendingBlock = -1;
+        app.tab().revealEditor = false;
+        app.tab().scrollY = y;
+    }
     ensureLayoutForView(app);
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
 void ensureLayoutForView(App& app) {
-    if (!app.hasTab() || app.tab().lay.done) return;
-    layoutStep(app, app.tab().scrollY + app.viewH() * 1.5f, 8);
-    if (!app.hasTab() || !app.tab().lay.done) SetTimer(app.hwnd, 1, 1, nullptr);
+    if (!app.hasTab() || app.tab().mode != Mode::Preview) return;
+    if (app.tab().layoutWidth != app.contentRight()) {
+        reflowAnchor(app);
+        return;
+    }
+    if (!app.tab().lay.done)
+        layoutStep(app, app.tab().scrollY + app.viewH() * 1.5f, 8);
+    if (app.tab().lay.edit.block < 0) layoutPreviewEditor(app);
+    resolvePendingScroll(app);
+    if (!app.tab().lay.done) SetTimer(app.hwnd, 1, 10, nullptr);
 }
 
 // ------------------------------------------------------------------ outline
@@ -466,23 +506,33 @@ void scrollOutline(App& app, float dy) {
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
-void scrollToBlock(App& app, int blockIndex) {
-    if (!app.hasTab()) return;
-    if (blockIndex < 0 || (size_t)blockIndex >= app.tab().lay.blockY.size()) return;
-    scrollTo(app, std::max(0.f, app.tab().lay.blockY[(size_t)blockIndex] - 6.f));
+void resolvePendingScroll(App& app) {
+    Tab& tab = app.tab();
+    if (tab.pendingBlock >= 0 && tab.pendingBlock < (int)tab.lay.next) {
+        const float y = tab.lay.blockY[(size_t)tab.pendingBlock] + tab.pendingOffset;
+        if (tab.lay.done || tab.lay.contentH >= y + app.viewH()) {
+            tab.pendingBlock = -1;
+            tab.scrollY = std::max(0.f, std::min(y, tab.lay.contentH - app.viewH()));
+        }
+    }
+    if (tab.lay.done) tab.scrollY = std::clamp(tab.scrollY, 0.f,
+                                               std::max(0.f, tab.lay.contentH - app.viewH()));
+}
+
+void scrollToBlock(App& app, int blockIndex, float offset) {
+    if (!app.hasTab() || blockIndex < 0 ||
+        (size_t)blockIndex >= app.tab().doc.blocks.size()) return;
+    app.tab().pendingBlock = blockIndex;
+    app.tab().pendingOffset = offset;
+    ensureLayoutForView(app);
+    InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
 void toggleOutline(App& app) {
     if (!app.hasTab()) return;
-    int anchor = blockAtScroll(app);
     app.showOutline = !app.showOutline;
     if (!app.showOutline) app.outlineScroll = 0.f;
-    layoutReset(app);
-    ensureLayoutForView(app);
-    if (anchor >= 0 && (size_t)anchor < app.tab().lay.blockY.size())
-        scrollTo(app, app.tab().lay.blockY[(size_t)anchor]);
-    else
-        scrollTo(app, 0.f);
+    if (app.tab().mode == Mode::Preview) reflowAnchor(app);
     InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
@@ -517,9 +567,9 @@ void paint(App& app) {
         D2D1_MATRIX_3X2_F tr = {1.f, 0.f, 0.f, 1.f, 0.f, app.contentTop() - t.scrollY};
         app.rt->SetTransform(tr);
 
-        if (t.lay.items.empty()) {
+        if (t.lay.items.empty() && t.lay.edit.block < 0) {
             app.rt->SetTransform(identity);
-            const wchar_t* hint = L"\u6b64\u9875\u4e3a\u7a7a\uff0c\u6309 Ctrl+E \u5207\u5230\u6e90\u7801";
+            const wchar_t* hint = L"点击此处开始编辑";
             ComPtr<IDWriteTextLayout> tl;
             DWRITE_TEXT_METRICS m = {};
             if (SUCCEEDED(app.dwrite->CreateTextLayout(hint, (UINT32)wcslen(hint),
@@ -531,11 +581,21 @@ void paint(App& app) {
                                        D2D1_DRAW_TEXT_OPTIONS_NONE);
             }
         } else {
-            for (const auto& it : t.lay.items) {
-                if (it.y + it.h < t.scrollY - 200.f) continue;
-                if (it.y > t.scrollY + app.viewH() + 200.f) break;
-                drawItem(app, it);
+            auto it = std::lower_bound(t.lay.items.begin(), t.lay.items.end(), t.scrollY - 200.f,
+                                       [](const Item& item, float y) { return item.y + item.h < y; });
+            for (; it != t.lay.items.end() && it->y <= t.scrollY + app.viewH() + 200.f; ++it) {
+                if (!t.lay.edit.replacesBlock || it->blockIndex != t.lay.edit.block) {
+                    drawItem(app, *it);
+                } else if (it->kind == BKind::Code) {
+                    drawCode(app, *it, false);
+                } else if (it->kind == BKind::Image) {
+                    drawImageBlock(app, *it, it->imgPath);
+                } else if (it->quoteDepth > 0 && !t.lay.edit.prefix) {
+                    app.rt->FillRectangle(rect(it->x - 12.f, it->y, it->x - 9.f, it->y + it->h),
+                                          app.brQuote.get());
+                }
             }
+            drawPreviewEditor(app);
             app.rt->SetTransform(identity);
         }
         app.rt->PopAxisAlignedClip();
@@ -554,11 +614,6 @@ void paint(App& app) {
     drawChrome(app);
 
     HRESULT hr = app.rt->EndDraw();
-    static bool firstPaint = true;
-    if (firstPaint) {
-        firstPaint = false;
-        trace("first frame presented");
-    }
     if (hr == D2DERR_RECREATE_TARGET) {
         releaseTarget(app);
         createTarget(app);

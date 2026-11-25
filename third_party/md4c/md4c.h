@@ -380,6 +380,9 @@ typedef struct MD_PARSER {
     /* Reserved. Set to NULL.
      */
     void (*syntax)(void);
+
+    /* MdReader extension: source byte range of each leaf block. */
+    void (*leaf_range)(MD_SIZE /*begin*/, MD_SIZE /*end*/, void* /*userdata*/);
 } MD_PARSER;
 
 

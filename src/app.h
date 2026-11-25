@@ -5,7 +5,6 @@
 #include "tab.h"
 #include "theme.h"
 
-#define WM_APP_LAYOUT (WM_APP + 1)
 #define WM_APP_INIT (WM_APP + 2)
 #define WM_APP_IMAGE (WM_APP + 3)
 
@@ -20,8 +19,8 @@ struct App {
         brQuote, brTableHead, brTableLine, brThumb, brPanel, brAccent, brSel, brHilite,
         brKw, brStr, brCom, brNum;
 
-    ComPtr<IDWriteTextFormat> fmtBody, fmtQuote, fmtCode, fmtTable, fmtTableHead,
-        fmtMarker, fmtMarkerRight, fmtToc, fmtBtn, fmtTab, fmtTabActive, fmtSource,
+    ComPtr<IDWriteTextFormat> fmtBody, fmtCode, fmtTable, fmtTableHead,
+        fmtMarkerRight, fmtToc, fmtBtn, fmtTab, fmtTabActive, fmtSource,
         fmtStatus, fmtIcon, fmtIconBold, fmtIconItalic, fmtIconMono, fmtCaption, fmtHead[6];
 
     float codeSpanSize = 14.f;
@@ -52,6 +51,10 @@ struct App {
     std::wstring findQuery;
     int findIndex = -1;
     int findCount = 0;
+    struct Match { size_t offset; int block; int cell = -1; };
+    std::vector<Match> matches;
+    struct ReadingPosition { std::wstring path; int line; float offset; };
+    std::vector<ReadingPosition> readingPositions;
 
     // ---- interaction ----
     int hoverBtn = -1;
@@ -59,7 +62,10 @@ struct App {
     bool dragThumb = false;
     float dragGrab = 0.f;
     bool selecting = false;
+    bool closing = false;
+    bool composing = false;
     bool caretOn = true;
+    wchar_t pendingSurrogate = 0;
     int ncHover = 0;   // 1 minimise, 2 maximise, 3 close
     bool maximized = false;
 
@@ -68,6 +74,7 @@ struct App {
     bool themeDark = false;
     int forceTheme = 0;  // 0 = follow system, 1 = dark, 2 = light
     std::wstring pendingFile;
+    std::wstring lastFile;
 };
 
 bool initGraphics(App& app);
@@ -78,20 +85,35 @@ void paint(App& app);
 
 // ---- document / tabs ----
 void newTab(App& app, const std::wstring& path, const std::wstring& text);
-void openPath(App& app, const std::wstring& path);
+bool openPath(App& app, const std::wstring& path);
 void closeTab(App& app, int index);
 void selectTab(App& app, int index);
 void switchMode(App& app, Mode mode);
 void toggleMode(App& app);
 bool saveTab(App& app);           // false when cancelled/failed
-void saveTabAs(App& app);
-void syncEditorToPreview(App& app);  // re-parse the buffer, re-anchor the view
+bool saveTabAs(App& app);
+void rememberReadingPosition(App& app, const Tab& tab);
+void syncEditorToPreview(App& app);
+void updatePreviewEditor(App& app, bool changed);
+void finishPreviewEdit(App& app);
+void startPreviewEdit(App& app, Pos pos, bool extend);
+bool previewMouseDown(App& app, float x, float y, bool extend);
+bool previewHitEditor(App& app, float x, float y, Pos& pos);
+int previewLinkAt(App& app, float x, float y);
+void openPreviewLink(App& app, int id);
+bool previewCaretPoint(App& app, float& x, float& y, float& height);
+void revealPreviewCaret(App& app, bool scrollVertically = true);
+void drawPreviewEditor(App& app);
+int blockForLine(const Doc& doc, int line);
+void restoreReadingPosition(App& app);
+void reloadTabFromDisk(App& app, int index, const std::wstring& text);
 
 // ---- layout / scrolling ----
 void scrollTo(App& app, float y);
 void ensureLayoutForView(App& app);
 void toggleOutline(App& app);
-void scrollToBlock(App& app, int blockIndex);
+void scrollToBlock(App& app, int blockIndex, float offset = -6.f);
+void resolvePendingScroll(App& app);
 void scrollOutline(App& app, float dy);
 void reflowAnchor(App& app);
 int blockAtScroll(const App& app);
@@ -110,7 +132,6 @@ void edUndo(App& app);
 void edRedo(App& app);
 void edMouseDown(App& app, float x, float y, bool extend);
 void edMouseDrag(App& app, float x, float y);
-void edSetCaretFromPoint(App& app, float x, float y, bool extend);
 void edEnsureCaretVisible(App& app);
 void edMoveCaretLine(App& app, int delta);
 void applyFormat(App& app, int action);

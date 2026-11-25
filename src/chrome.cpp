@@ -30,28 +30,51 @@ const int kToolButtonCount = (int)(sizeof(kToolButtons) / sizeof(kToolButtons[0]
 
 namespace {
 
-const float kTabPad = 12.f;
-const float kTabMaxW = 190.f;
 const float kTabMinW = 96.f;
 const float kBtn = 30.f;
 const float kBtnGap = 2.f;
 const float kGroupGap = 12.f;
 const float kCapBtnW = 46.f;
 
-float tabWidth(App& app, int i) {
-    const Tab& t = app.tabs[(size_t)i];
-    std::wstring title = t.name.empty() ? L"无标题" : t.name;
-    if (t.dirty) title += L" *";
-    ComPtr<IDWriteTextLayout> tl;
-    float w = 140.f;
-    if (app.fmtTab &&
-        SUCCEEDED(app.dwrite->CreateTextLayout(title.c_str(), (UINT32)title.size(), app.fmtTab.get(),
-                                               10000.f, 100.f, tl.put()))) {
-        DWRITE_TEXT_METRICS m = {};
-        tl->GetMetrics(&m);
-        w = m.widthIncludingTrailingWhitespace + kTabPad * 2 + 26.f;
-    }
-    return std::max(kTabMinW, std::min(kTabMaxW, w));
+const float kTabsLeft = 38.f;
+const float kTabGap = 2.f;
+const float kTabButton = 28.f;
+const float kPreferredTabWidth = 150.f;
+
+struct TabStrip {
+    int first, count;
+    float width;
+    D2D1_RECT_F add, overflow;
+};
+
+TabStrip tabStrip(const App& app) {
+    const int total = (int)app.tabs.size();
+    const float right = app.vw - kCapBtnW * 3.f - 6.f;
+    const float available = std::max(0.f, right - kTabsLeft - kTabButton);
+    const bool overflow = total * (kTabMinW + kTabGap) > available;
+    const float tabsWidth = std::max(0.f, available - (overflow ? kTabButton : 0.f));
+    const int count = total ? std::min(total, std::max(1, (int)(tabsWidth / (kTabMinW + kTabGap)))) : 0;
+    const float width = count ? std::max(0.f, std::min(kPreferredTabWidth, tabsWidth / count - kTabGap)) : 0.f;
+    const int first = std::clamp(app.active - count + 1, 0, total - count);
+    const float addLeft = kTabsLeft + count * (width + kTabGap);
+    auto button = [&](float left) {
+        return rect(left, 4.f, left + kTabButton, app.tabStripH - 2.f);
+    };
+    return {first, count, width, button(addLeft), overflow ? button(addLeft + kTabButton) : D2D1_RECT_F{}};
+}
+
+D2D1_RECT_F tabRect(const App& app, const TabStrip& strip, int index) {
+    const float x = kTabsLeft + (index - strip.first) * (strip.width + kTabGap);
+    return rect(x, 3.f, x + strip.width, app.tabStripH);
+}
+
+bool inRect(D2D1_RECT_F r, float x, float y) {
+    return r.right > r.left && x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+}
+
+D2D1_RECT_F tabClose(D2D1_RECT_F tab) {
+    if (tab.right - tab.left < 38.f) return {};
+    return rect(tab.right - 22.f, tab.top + 7.f, tab.right - 8.f, tab.bottom - 7.f);
 }
 
 void drawCheckPath(App& app, D2D1_RECT_F r, ID2D1Brush* b, bool checked) {
@@ -228,33 +251,12 @@ D2D1_RECT_F toolButtonRect(const App& app, int index) {
 }
 
 
-D2D1_RECT_F tabRect(const App& app, int index) {
-    float x = 38.f;
-    for (int i = 0; i < index && i < (int)app.tabs.size(); ++i) {
-        App& a = const_cast<App&>(app);
-        x += tabWidth(a, i) + 2.f;
-    }
-    App& a = const_cast<App&>(app);
-    float w = tabWidth(a, index);
-    return rect(x, 3.f, x + w, app.tabStripH);
-}
-
-D2D1_RECT_F newTabRect(const App& app) {
-    float x = 38.f;
-    App& a = const_cast<App&>(app);
-    for (int i = 0; i < (int)app.tabs.size(); ++i) x += tabWidth(a, i) + 2.f;
-    return rect(x + 2.f, 4.f, x + 30.f, app.tabStripH - 2.f);
-}
-
-D2D1_RECT_F closeTabRect(const App& app, int index) {
-    D2D1_RECT_F t = tabRect(app, index);
-    return rect(t.right - 22.f, t.top + 7.f, t.right - 8.f, t.bottom - 7.f);
-}
+D2D1_RECT_F tabOverflowRect(const App& app) { return tabStrip(app).overflow; }
 
 D2D1_RECT_F captionIconRect(const App& app) {
-    float s = 16.f;
-    float top = (app.tabStripH - s) * 0.5f;
-    return rect(11.f, top, 11.f + s, top + s);
+    float size = 21.f;
+    float top = (app.tabStripH - size) * 0.5f;
+    return rect(8.f, top, 8.f + size, top + size);
 }
 
 namespace {
@@ -272,13 +274,7 @@ bool captionIsEmpty(const App& app, float x, float y) {
     if (y >= app.tabStripH) return false;
     if (x < 34.f) return false;  // icon area
     if (x >= captionMinRect(app).left) return false;
-    for (int i = 0; i < (int)app.tabs.size(); ++i) {
-        D2D1_RECT_F t = tabRect(app, i);
-        if (x >= t.left - 2.f && x <= t.right + 2.f) return false;
-    }
-    D2D1_RECT_F plus = newTabRect(app);
-    if (x >= plus.left - 4.f && x <= plus.right + 8.f) return false;
-    return true;
+    return chromeHitTest(app, x, y).action == ChromeAction::None;
 }
 
 D2D1_RECT_F findBarRect(const App& app) {
@@ -310,11 +306,9 @@ void drawTabStrip(App& app) {
         app.rt->DrawLine(D2D1_POINT_2F{rx, T}, D2D1_POINT_2F{R, T + fold}, fg, lw);
     }
 
-    float tabsLimit = app.vw - kCapBtnW * 3.f - 6.f;
-    for (int i = 0; i < (int)app.tabs.size(); ++i) {
-        D2D1_RECT_F r = tabRect(app, i);
-        if (r.left >= tabsLimit) break;
-        r.right = std::min(r.right, tabsLimit);
+    const TabStrip strip = tabStrip(app);
+    for (int i = strip.first; i < strip.first + strip.count; ++i) {
+        D2D1_RECT_F r = tabRect(app, strip, i);
         bool sel = i == app.active;
         D2D1_COLOR_F bg = sel ? app.th.bg : app.th.panel;
         ComPtr<ID2D1SolidColorBrush> b;
@@ -324,13 +318,18 @@ void drawTabStrip(App& app) {
 
         std::wstring title = app.tabs[(size_t)i].name.empty() ? L"\u65e0\u6807\u9898"
                                                              : app.tabs[(size_t)i].name;
-        if (app.tabs[(size_t)i].dirty) title += L" *";
+        const bool dirty = app.tabs[(size_t)i].dirty;
+        const float titleRight = r.right - (dirty ? 36.f : 24.f);
+        if (dirty)
+            app.rt->FillEllipse({{r.right - 29.f, (r.top + r.bottom) * 0.5f}, 2.f, 2.f},
+                                app.brMuted.get());
         app.rt->DrawText(title.c_str(), (UINT32)title.size(),
                          sel ? app.fmtTabActive.get() : app.fmtTab.get(),
-                         rect(r.left + 10.f, r.top + 2.f, r.right - 24.f, r.bottom - 2.f),
+                         rect(r.left + 10.f, r.top + 2.f, titleRight, r.bottom - 2.f),
                          sel ? app.brText.get() : app.brMuted.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 
-        D2D1_RECT_F c = closeTabRect(app, i);
+        D2D1_RECT_F c = tabClose(r);
+        if (c.right <= c.left) continue;
         bool hot = app.hoverCloseTab == i;
         ID2D1Brush* cb = hot ? app.brText.get() : app.brMuted.get();
         if (hot) {
@@ -345,11 +344,14 @@ void drawTabStrip(App& app) {
                          D2D1_POINT_2F{c.left + m, c.bottom - m}, cb, 1.2f);
     }
 
-    D2D1_RECT_F plus = newTabRect(app);
-    if (plus.left < tabsLimit)
-        app.rt->DrawText(L"+", 1, app.fmtIcon.get(),
-                         rect(plus.left, plus.top, std::min(plus.right, tabsLimit), plus.bottom),
-                         app.brMuted.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    app.rt->DrawText(L"+", 1, app.fmtIcon.get(), strip.add, app.brMuted.get(),
+                     D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    if (strip.overflow.right > strip.overflow.left) {
+        const float x = (strip.overflow.left + strip.overflow.right) * 0.5f;
+        const float y = (strip.overflow.top + strip.overflow.bottom) * 0.5f;
+        app.rt->DrawLine({x - 4.f, y - 2.f}, {x, y + 2.f}, app.brMuted.get(), 1.3f);
+        app.rt->DrawLine({x, y + 2.f}, {x + 4.f, y - 2.f}, app.brMuted.get(), 1.3f);
+    }
 
     // ---- window buttons ----
     D2D1_RECT_F btn[3] = {captionMinRect(app), captionMaxRect(app), captionCloseRect(app)};
@@ -385,7 +387,7 @@ void drawToolbar(App& app) {
     app.rt->FillRectangle(rect(0.f, app.contentTop() - 1.f, app.vw, app.contentTop()),
                           app.brRule.get());
 
-    bool editing = app.hasTab() && app.tab().mode == Mode::Source;
+    bool editing = app.hasTab();
     D2D1_RECT_F r[kToolButtonCount];
     toolButtonRects(app, r);
 
@@ -394,7 +396,7 @@ void drawToolbar(App& app) {
         bool active = false;
         switch (kToolButtons[i].action) {
         case ChromeAction::Outline: active = app.showOutline; break;
-        case ChromeAction::ToggleMode: active = editing; break;
+        case ChromeAction::ToggleMode: active = editing && app.tab().mode == Mode::Source; break;
         default: break;
         }
 
@@ -488,28 +490,15 @@ void drawStatus(App& app) {
             wchar_t buf[64];
             swprintf(buf, 64, L"行 %d，列 %d", t.ed.caret.line + 1, t.ed.caret.col + 1);
             left = buf;
-            size_t chars = 0;
-            for (const auto& l : t.ed.lines) chars += l.size();
-            swprintf(buf, 64, L"%zu 个字符", chars);
+            swprintf(buf, 64, L"%d 行", t.ed.lineCount());
             mid = buf;
         } else {
             wchar_t buf[64];
             swprintf(buf, 64, L"%d 个块", (int)t.doc.blocks.size());
             left = buf;
-            int words = 0;
-            for (const auto& b : t.doc.blocks) {
-                bool inWord = false;
-                for (const auto& r : b.runs) {
-                    for (wchar_t c : r.text) {
-                        bool sp = iswspace((wint_t)c) != 0;
-                        if (!sp && !inWord) { ++words; inWord = true; }
-                        else if (sp) inWord = false;
-                    }
-                }
-            }
-            swprintf(buf, 64, L"%d 个字词", words);
-            mid = buf;
+
         }
+        if (t.diskChanged) mid = L"文件已在外部更改";
         mode = t.mode == Mode::Source ? L"源码" : L"预览";
     }
 
@@ -532,29 +521,16 @@ void drawChrome(App& app) {
     drawStatus(app);
 }
 
-ChromeHit chromeHitTest(App& app, float x, float y) {
+ChromeHit chromeHitTest(const App& app, float x, float y) {
     ChromeHit h;
     if (y < app.tabStripH) {
-        float tabsLimit = app.vw - kCapBtnW * 3.f - 6.f;
-        D2D1_RECT_F plus = newTabRect(app);
-        if (plus.left < tabsLimit && x >= plus.left && x <= plus.right) {
-            h.action = ChromeAction::NewTab;
-            return h;
-        }
-        for (int i = 0; i < (int)app.tabs.size(); ++i) {
-            if (tabRect(app, i).left >= tabsLimit) break;
-            D2D1_RECT_F c = closeTabRect(app, i);
-            if (x >= c.left && x <= c.right) {
-                h.action = ChromeAction::CloseTab;
-                h.index = i;
-                return h;
-            }
-            D2D1_RECT_F t = tabRect(app, i);
-            if (x >= t.left && x <= t.right) {
-                h.action = ChromeAction::SelectTab;
-                h.index = i;
-                return h;
-            }
+        const TabStrip strip = tabStrip(app);
+        if (inRect(strip.add, x, y)) return {ChromeAction::NewTab};
+        if (inRect(strip.overflow, x, y)) return {ChromeAction::TabMenu};
+        for (int i = strip.first; i < strip.first + strip.count; ++i) {
+            const auto tab = tabRect(app, strip, i);
+            if (inRect(tabClose(tab), x, y)) return {ChromeAction::CloseTab, i};
+            if (inRect(tab, x, y)) return {ChromeAction::SelectTab, i};
         }
         return h;
     }

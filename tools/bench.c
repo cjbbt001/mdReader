@@ -1,37 +1,68 @@
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <psapi.h>
 #include <stdio.h>
+#include <wchar.h>
 
-int main(int argc, char** argv) {
-    if (argc < 2) { printf("usage: bench <exe> [file]\n"); return 1; }
-    char cmd[1024];
-    snprintf(cmd, sizeof cmd, "%s %s", argv[1], argc > 2 ? argv[2] : "");
+struct WindowSearch {
+    DWORD pid;
+    HWND window;
+};
 
-    STARTUPINFOA si = {sizeof si};
-    PROCESS_INFORMATION pi;
-    ULONGLONG t0 = GetTickCount64();
-    if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-        printf("CreateProcess failed (%lu)\n", GetLastError());
+static BOOL CALLBACK findWindow(HWND window, LPARAM data) {
+    struct WindowSearch* search = (struct WindowSearch*)data;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(window, &pid);
+    if (pid == search->pid && IsWindowVisible(window)) {
+        search->window = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+int wmain(int argc, wchar_t** argv) {
+    if (argc != 3) {
+        fputs("usage: bench <exe> <test Markdown file>\n", stderr);
+        return 1;
+    }
+    wchar_t command[32768];
+    if (swprintf(command, ARRAYSIZE(command), L"\"%ls\" \"%ls\"", argv[1], argv[2]) < 0)
+        return 1;
+
+    STARTUPINFOW startup = {sizeof startup};
+    PROCESS_INFORMATION child;
+    LARGE_INTEGER frequency, start, visible;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&start);
+    if (!CreateProcessW(argv[1], command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &child)) {
+        fprintf(stderr, "CreateProcess failed (%lu)\n", GetLastError());
         return 1;
     }
 
-    ULONGLONG tvis = 0;
-    for (int i = 0; i < 3000; i++) {
-        HWND h = FindWindowW(L"MDReaderWindow", NULL);
-        if (h && IsWindowVisible(h)) { tvis = GetTickCount64() - t0; break; }
-        Sleep(1);
+    struct WindowSearch search = {child.dwProcessId, NULL};
+    for (int i = 0; i < 500 && !search.window; ++i) {
+        EnumWindows(findWindow, (LPARAM)&search);
+        if (search.window || WaitForSingleObject(child.hProcess, 2) == WAIT_OBJECT_0) break;
     }
+    QueryPerformanceCounter(&visible);
+    Sleep(1000);
+    PROCESS_MEMORY_COUNTERS_EX memory = {0};
+    memory.cb = sizeof memory;
+    int ok = search.window && GetProcessMemoryInfo(child.hProcess,
+                            (PROCESS_MEMORY_COUNTERS*)&memory, sizeof memory);
+    if (ok)
+        printf("%.1f ms, %.1f MiB working set, %.1f MiB private\n",
+               (visible.QuadPart - start.QuadPart) * 1000.0 / frequency.QuadPart,
+               memory.WorkingSetSize / 1048576.0, memory.PrivateUsage / 1048576.0);
+    else
+        fputs("Benchmark could not locate the new process window. Close any running MdReader instance first.\n", stderr);
 
-    Sleep(500);
-    HANDLE hp = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pi.dwProcessId);
-    PROCESS_MEMORY_COUNTERS pmc = {0};
-    pmc.cb = sizeof pmc;
-    if (hp) GetProcessMemoryInfo(hp, &pmc, sizeof pmc);
-
-    printf("window visible: %llu ms   working set: %llu MB   private: %llu MB\n", tvis,
-           pmc.WorkingSetSize / 1048576ULL, pmc.PagefileUsage / 1048576ULL);
-    if (hp) CloseHandle(hp);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    return 0;
+    // Benchmark fixture only. Avoid saving its path into the user's session.
+    if (search.window) {
+        TerminateProcess(child.hProcess, 0);
+        WaitForSingleObject(child.hProcess, 3000);
+    }
+    CloseHandle(child.hProcess);
+    CloseHandle(child.hThread);
+    return ok ? 0 : 1;
 }

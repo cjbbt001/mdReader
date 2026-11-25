@@ -7,6 +7,14 @@
 #include <vector>
 
 enum class Mode { Preview, Source };
+enum class LineEnding { LF, CRLF, CR };
+
+struct FileStamp {
+    uint64_t id = 0, size = 0, modified = 0;
+    DWORD volume = 0;
+    bool exists = false;
+    bool operator==(const FileStamp&) const = default;
+};
 
 // Caret / selection inside the source buffer. Positions are (line, col) with
 // col counted in UTF-16 units.
@@ -31,6 +39,7 @@ struct Editor {
         std::vector<std::wstring> lines;
         Pos caret, anchor;
         uint64_t tick = 0;
+        size_t bytes = 0;
     };
     std::vector<Snapshot> undo, redo;
 
@@ -47,6 +56,8 @@ struct Editor {
     void snapshot(uint64_t now);
     bool undoStep();
     bool redoStep();
+    Snapshot capture(uint64_t tick) const;
+    void trimUndo();
 
     void moveTo(Pos p, bool extend);
     void moveBy(int dLine, int dCol, bool extend);
@@ -77,5 +88,15 @@ struct Tab {
     Editor ed;
 
     std::wstring path, name;
+    FileStamp fileStamp;
+    bool diskChanged = false;
     bool dirty = false;
+    bool utf8Bom = false;
+    LineEnding lineEnding = LineEnding::LF;
+    bool previewStale = false;
+    bool revealEditor = false;
+    int editFirst = -1, editLast = -1;
+    int pendingBlock = -1;
+    float pendingOffset = 0.f;
+    float layoutWidth = -1.f;
 };

@@ -25,7 +25,7 @@ inline Theme makeTheme(bool dark) {
         t.tableLine = rgb(0x3A3A3A);
         t.thumb = rgb(0x5A5A5A);
         t.panel = rgb(0x232323);
-        t.selection = rgb(0x2F4F7F);
+        t.selection = rgb(0x365678, 0.60f);
         t.highlight = rgb(0x6B5A1E);
         t.kw = rgb(0xFF7B72);
         t.str = rgb(0xA5D6FF);
@@ -44,7 +44,7 @@ inline Theme makeTheme(bool dark) {
         t.tableLine = rgb(0xD8DEE4);
         t.thumb = rgb(0xC4C9CE);
         t.panel = rgb(0xFAFBFC);
-        t.selection = rgb(0xCDE3FF);
+        t.selection = rgb(0x203E63, 0.26f);
         t.highlight = rgb(0xFFE08A);
         t.kw = rgb(0xCF222E);
         t.str = rgb(0x0A3069);

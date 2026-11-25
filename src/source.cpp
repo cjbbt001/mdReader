@@ -49,30 +49,13 @@ int srcColForX(App& app, int line, float x) {
     if (l.empty()) return 0;
     float base = srcTextX(app);
     if (x <= base) return 0;
-    // Monospace estimate first (CJK counts double), then snap to the nearest half cell.
-    float unit = textWidthOf(app, app.fmtSource.get(), L"M");
-    if (unit <= 0.f) unit = 8.f;
-    int col = (int)((x - base + unit * 0.4f) / unit);
-    if (col < 0) col = 0;
-    if (col > (int)l.size()) col = (int)l.size();
-    // Walk back to a column whose measured width brackets x.
-    for (int guard = 0; guard < 64; ++guard) {
-        float left = base + textWidthOf(app, app.fmtSource.get(), l.substr(0, (size_t)col));
-        if (left <= x) break;
-        --col;
-        if (col <= 0) return 0;
-    }
-    return col;
-}
-
-void edSetCaretFromPoint(App& app, float x, float y, bool extend) {
-    Editor& ed = app.tab().ed;
-    float top = app.contentTop();
-    int line = ed.firstLine + (int)std::floor((y - top) / kLineH);
-    if (line < 0) line = 0;
-    if (line >= ed.lineCount()) line = ed.lineCount() - 1;
-    int col = srcColForX(app, line, x);
-    ed.moveTo(Pos{line, col}, extend);
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(app.dwrite->CreateTextLayout(l.data(), (UINT32)l.size(), app.fmtSource.get(),
+                                            100000.f, kLineH, layout.put()))) return 0;
+    DWRITE_HIT_TEST_METRICS hit = {};
+    BOOL trailing = FALSE, inside = FALSE;
+    if (FAILED(layout->HitTestPoint(x - base, kLineH / 2.f, &trailing, &inside, &hit))) return 0;
+    return (int)(hit.textPosition + (trailing ? hit.length : 0));
 }
 
 void edEnsureCaretVisible(App& app) {
@@ -145,20 +128,23 @@ void srcDraw(App& app) {
                          D2D1_DRAW_TEXT_OPTIONS_CLIP);
 
         const std::wstring& line = ed.line(ln);
-        if (!line.empty()) {
-            app.rt->DrawText(line.c_str(), (UINT32)line.size(), app.fmtSource.get(),
-                             rect(srcTextX(app), y, srcTextX(app) + 20000.f, y + kLineH),
-                             app.brText.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        }
-
         if (hasSel && ln >= selA.line && ln <= selB.line) {
             int c0 = ln == selA.line ? selA.col : 0;
             int c1 = ln == selB.line ? selB.col : (int)line.size();
             if (c1 > c0 || (ln < selB.line)) {
                 float x0 = srcTextX(app) + textWidthOf(app, app.fmtSource.get(), line.substr(0, (size_t)c0));
                 float x1 = srcXForCol(app, ln, c1) + (c1 >= (int)line.size() ? 6.f : 0.f);
-                app.rt->FillRectangle(rect(x0, y, x1, y + kLineH), app.brSel.get());
+                app.rt->FillRectangle(rect(std::max(gutter + 1.f, x0), y,
+                                           std::max(gutter + 1.f, x1), y + kLineH), app.brSel.get());
             }
+        }
+        if (!line.empty()) {
+            app.rt->PushAxisAlignedClip(rect(gutter + 1.f, y, app.contentRight(), y + kLineH),
+                                        D2D1_ANTIALIAS_MODE_ALIASED);
+            app.rt->DrawText(line.c_str(), (UINT32)line.size(), app.fmtSource.get(),
+                             rect(srcTextX(app), y, srcTextX(app) + 20000.f, y + kLineH),
+                             app.brText.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            app.rt->PopAxisAlignedClip();
         }
     }
 
